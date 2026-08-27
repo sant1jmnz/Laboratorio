@@ -8,16 +8,24 @@
 <style>
   :root {
     color-scheme: dark;
-    --bg: #1e1e1e;
-    --bg-raised: #252526;
-    --bg-inset: #17181a;
-    --border: #333438;
-    --text: #d4d4d4;
-    --text-dim: #8a8d91;
-    --accent: #4fa6ff;
-    --accent-dim: #2f6fa8;
-    --ok: #3fb950;
-    --warn: #e5c07b;
+    /* Paleta VS Code "Dark+" */
+    --editor-bg: #1e1e1e;
+    --titlebar-bg: #3c3c3c;
+    --tabbar-bg: #252526;
+    --panel-bg: #1e1e1e;
+    --panel-border: #2b2b2b;
+    --statusbar-bg: #007acc;
+    --input-bg: #3c3c3c;
+    --border: #454545;
+    --text: #cccccc;
+    --text-dim: #9d9d9d;
+    --text-faint: #6a6a6a;
+    --button-bg: #0e639c;
+    --button-hover: #1177bb;
+    --focus: #007fd4;
+    --ok: #89d185;
+    --warn: #cca700;
+    --err: #f14c4c;
     --mono: 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   }
@@ -27,10 +35,11 @@
   html, body {
     margin: 0;
     height: 100%;
-    background: var(--bg);
+    background: var(--editor-bg);
     color: var(--text);
     font-family: var(--sans);
     overflow: hidden;
+    font-size: 13px;
   }
 
   #app {
@@ -42,12 +51,12 @@
   header {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 0 16px;
-    height: 52px;
+    gap: 14px;
+    padding: 0 14px;
+    height: 44px;
     flex: none;
-    background: var(--bg-raised);
-    border-bottom: 1px solid var(--border);
+    background: var(--titlebar-bg);
+    border-bottom: 1px solid #292929;
   }
 
   .brand {
@@ -57,18 +66,19 @@
     font-weight: 600;
     letter-spacing: 0.2px;
     white-space: nowrap;
+    color: #fff;
   }
 
   .brand-mark {
-    width: 22px;
-    height: 22px;
-    border-radius: 6px;
-    background: linear-gradient(135deg, var(--accent), #7b5cff);
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: #007acc;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     color: #fff;
     flex: none;
@@ -76,7 +86,7 @@
 
   .divider {
     width: 1px;
-    height: 24px;
+    height: 22px;
     background: var(--border);
     flex: none;
   }
@@ -95,94 +105,80 @@
   }
 
   #room {
-    background: var(--bg-inset);
+    background: var(--input-bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 10px;
+    border-radius: 3px;
+    padding: 5px 8px;
     font-family: var(--mono);
-    font-size: 13px;
-    width: 160px;
+    font-size: 12px;
+    width: 150px;
     outline: none;
     transition: border-color 0.15s ease;
   }
 
-  #room:focus {
-    border-color: var(--accent-dim);
-  }
+  #room:focus { border-color: var(--focus); }
 
   button {
     font-family: var(--sans);
-    font-size: 13px;
+    font-size: 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 6px 12px;
     cursor: pointer;
-    background: var(--bg-inset);
+    background: var(--input-bg);
     color: var(--text);
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: background 0.1s ease, border-color 0.1s ease;
   }
 
-  button:hover { background: #2a2b2e; border-color: #45474c; }
-  button:active { background: #202124; }
+  button:hover { background: #45494e; }
+  button:active { background: #3a3d41; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button:disabled:hover { background: var(--input-bg); }
 
   #join {
-    background: var(--accent-dim);
-    border-color: var(--accent-dim);
+    background: var(--button-bg);
+    border-color: var(--button-bg);
     color: #fff;
   }
-  #join:hover { background: #3a80bd; border-color: #3a80bd; }
+  #join:hover { background: var(--button-hover); border-color: var(--button-hover); }
+
+  #run {
+    background: #16825d;
+    border-color: #16825d;
+    color: #fff;
+    font-weight: 600;
+  }
+  #run:hover { background: #1a9c6f; border-color: #1a9c6f; }
 
   #share.copied {
     background: var(--ok);
     border-color: var(--ok);
-    color: #fff;
+    color: #0b3d0b;
   }
 
   .spacer { flex: 1; }
 
-  #status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
-
-  #status .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-dim);
-    flex: none;
-  }
-
-  #status.connected .dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
-  #status.connecting .dot { background: var(--warn); }
-  #status.offline .dot { background: #e5534b; }
-
   #peers {
     display: flex;
     align-items: center;
-    gap: -6px;
   }
 
   .peer-avatar {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: #12141a;
-    border: 2px solid var(--bg-raised);
+    border: 2px solid var(--titlebar-bg);
     margin-left: -8px;
   }
   .peer-avatar:first-child { margin-left: 0; }
@@ -190,22 +186,20 @@
   main {
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #editor-wrap {
+    flex: 1;
+    min-height: 0;
     position: relative;
   }
 
-  #editor {
-    height: 100%;
-  }
+  #editor { height: 100%; }
 
-  .cm-editor {
-    height: 100%;
-    font-family: var(--mono) !important;
-  }
-
-  .cm-scroller {
-    font-family: var(--mono) !important;
-    line-height: 1.55;
-  }
+  .cm-editor { height: 100%; font-family: var(--mono) !important; }
+  .cm-scroller { font-family: var(--mono) !important; line-height: 1.55; }
 
   #boot-hint {
     position: absolute;
@@ -218,13 +212,135 @@
     pointer-events: none;
     opacity: 1;
     transition: opacity 0.2s ease;
+    background: var(--editor-bg);
   }
-  #boot-hint.hidden { opacity: 0; }
+  #boot-hint.hidden { opacity: 0; pointer-events: none; }
+
+  /* Panel de salida, tipo terminal integrado */
+  #output-panel {
+    flex: none;
+    height: 220px;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--panel-border);
+  }
+  #output-panel.collapsed { height: 34px; }
+
+  #output-panel .panel-header {
+    height: 34px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    background: var(--tabbar-bg);
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+  }
+
+  #output-panel.collapsed .panel-header { border-bottom: none; }
+
+  #panel-toggle {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  #panel-toggle:hover { background: #333; color: var(--text); }
+
+  #output-status {
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  #output-status.ok { color: var(--ok); }
+  #output-status.err { color: var(--err); }
+  #output-status.busy { color: var(--warn); }
+
+  #output-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  #output-panel.collapsed #output-body { display: none; }
+
+  #output-text {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+  }
+  #output-text .err-line { color: var(--err); }
+  #output-text .dim-line { color: var(--text-faint); }
+
+  #stdin-col {
+    flex: none;
+    width: 240px;
+    border-left: 1px solid var(--panel-border);
+    display: flex;
+    flex-direction: column;
+  }
+  #stdin-col label {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 8px 10px 4px;
+  }
+  #stdin {
+    flex: 1;
+    resize: none;
+    background: var(--editor-bg);
+    color: var(--text);
+    border: none;
+    outline: none;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 0 10px 10px;
+    line-height: 1.5;
+  }
+
+  footer#statusbar {
+    flex: none;
+    height: 22px;
+    background: var(--statusbar-bg);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 12px;
+    font-size: 11.5px;
+  }
+
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  #status .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: 0.5;
+  }
+  #status.connected .dot { opacity: 1; }
+  #status.offline .dot { background: #ffd7d3; }
 
   @media (max-width: 640px) {
     header { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 8px; }
     .divider { display: none; }
-    #room { width: 120px; }
+    #room { width: 110px; }
+    #stdin-col { width: 160px; }
   }
 </style>
 </head>
@@ -244,12 +360,34 @@
       <button id="share" title="Copiar link de esta sala">Compartir</button>
       <div class="spacer"></div>
       <div id="peers"></div>
-      <div id="status" class="connecting"><span class="dot"></span><span id="status-text">Conectando…</span></div>
+      <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>
     </header>
     <main>
-      <div id="editor"></div>
-      <div id="boot-hint">Cargando editor…</div>
+      <div id="editor-wrap">
+        <div id="editor"></div>
+        <div id="boot-hint">Cargando editor…</div>
+      </div>
+      <div id="output-panel">
+        <div class="panel-header">
+          <button id="panel-toggle" title="Colapsar/expandir">▾</button>
+          <span>Salida</span>
+          <span id="output-status">lista para ejecutar</span>
+        </div>
+        <div id="output-body">
+          <pre id="output-text">Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el código.</pre>
+          <div id="stdin-col">
+            <label for="stdin">Entrada estándar (stdin)</label>
+            <textarea id="stdin" spellcheck="false" placeholder="Se envía al programa antes de ejecutarlo"></textarea>
+          </div>
+        </div>
+      </div>
     </main>
+    <footer id="statusbar">
+      <div id="status" class="connecting"><span class="dot"></span><span id="status-text">Conectando…</span></div>
+      <span id="lang-indicator">C++17</span>
+      <div class="spacer"></div>
+      <span>Yjs · WebSocket</span>
+    </footer>
   </div>
 
   <script type="module" src="/bundle.js"></script>
