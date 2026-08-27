@@ -14,6 +14,7 @@ import { FitAddon } from '@xterm/addon-fit';
 const roomInput = document.getElementById('room');
 const joinBtn = document.getElementById('join');
 const shareBtn = document.getElementById('share');
+const saveBtn = document.getElementById('save');
 const runBtn = document.getElementById('run');
 const peersEl = document.getElementById('peers');
 const editorEl = document.getElementById('editor');
@@ -107,6 +108,7 @@ new ResizeObserver(() => fitAddon.fit()).observe(terminalEl);
 let currentView = null;
 let currentProvider = null;
 let currentDoc = null;
+let currentRoom = null;
 let runSocket = null;
 
 function getRoomFromUrl() {
@@ -405,6 +407,7 @@ function runCode() {
 }
 
 function joinRoom(room) {
+  currentRoom = room;
   bootHintEl.classList.remove('hidden');
   bootHintEl.textContent = 'Cargando editor…';
   setStatus('connecting', 'Conectando…');
@@ -431,12 +434,21 @@ function joinRoom(room) {
 
   const ytext = ydoc.getText('codemirror');
 
-  // Solo sembramos el contenido por defecto una vez que confirmamos con el
-  // servidor que el documento esta vacio, para no pisar/duplicar contenido
-  // de otros clientes que se conecten al mismo tiempo.
-  provider.once('sync', (isSynced) => {
+  // Solo sembramos contenido una vez que confirmamos con el servidor que el
+  // documento esta vacio, para no pisar/duplicar contenido de otros
+  // clientes que se conecten al mismo tiempo. Si hay una version guardada
+  // en GitHub para esta sala, arrancamos con esa en vez del ejemplo.
+  provider.once('sync', async (isSynced) => {
     if (isSynced && ytext.length === 0) {
-      ytext.insert(0, DEFAULT_CODE);
+      let seed = DEFAULT_CODE;
+      try {
+        const res = await fetch(`/api/saved/${encodeURIComponent(room)}`);
+        const data = await res.json();
+        if (data.code) seed = data.code;
+      } catch {
+        // sin conexion con la API de guardado: seguimos con el ejemplo por defecto
+      }
+      if (ytext.length === 0) ytext.insert(0, seed);
     }
     bootHintEl.classList.add('hidden');
   });
@@ -461,6 +473,15 @@ function joinRoom(room) {
 roomInput.value = getRoomFromUrl();
 joinRoom(roomInput.value);
 
+fetch('/api/save-status')
+  .then((r) => r.json())
+  .then(({ enabled }) => {
+    if (!enabled) {
+      saveBtn.title = 'El guardado en GitHub no esta configurado en este servidor (falta GITHUB_TOKEN/GITHUB_REPO).';
+    }
+  })
+  .catch(() => {});
+
 joinBtn.addEventListener('click', () => {
   const room = roomInput.value.trim() || 'general';
   setRoomInUrl(room);
@@ -471,7 +492,43 @@ roomInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') joinBtn.click();
 });
 
+async function saveCurrentCode() {
+  if (!currentDoc || !currentRoom) return;
+  const code = currentDoc.getText('codemirror').toString();
+
+  saveBtn.disabled = true;
+  saveBtn.classList.remove('saved', 'save-error');
+  saveBtn.textContent = 'Guardando…';
+
+  try {
+    const res = await fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ room: currentRoom, code, author: userName }),
+    });
+    const result = await res.json();
+    if (result.ok) {
+      saveBtn.textContent = '✓ Guardado';
+      saveBtn.classList.add('saved');
+    } else {
+      saveBtn.textContent = 'Error al guardar';
+      saveBtn.classList.add('save-error');
+      saveBtn.title = result.message || 'No se pudo guardar en GitHub.';
+    }
+  } catch {
+    saveBtn.textContent = 'Error de red';
+    saveBtn.classList.add('save-error');
+  } finally {
+    saveBtn.disabled = false;
+    setTimeout(() => {
+      saveBtn.textContent = '💾 Guardar';
+      saveBtn.classList.remove('saved', 'save-error');
+    }, 2500);
+  }
+}
+
 shareBtn.addEventListener('click', copyShareLink);
+saveBtn.addEventListener('click', saveCurrentCode);
 runBtn.addEventListener('click', runCode);
 panelToggle.addEventListener('click', () => {
   setPanelCollapsed(!outputPanel.classList.contains('collapsed'));

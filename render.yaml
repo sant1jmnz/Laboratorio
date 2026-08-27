@@ -7,3 +7,13 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Guardado de codigo en GitHub (opcional). Sin estas variables el
+      # boton "Guardar" queda deshabilitado con un mensaje explicativo.
+      # Cargalas desde el dashboard de Render (Environment), no las pongas
+      # en este archivo.
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_SAVE_BRANCH
+        sync: false

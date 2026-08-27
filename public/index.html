@@ -155,10 +155,16 @@
   }
   #run:hover { background: #1a9c6f; border-color: #1a9c6f; }
 
-  #share.copied {
+  #share.copied,
+  #save.saved {
     background: var(--ok);
     border-color: var(--ok);
     color: #0b3d0b;
+  }
+  #save.save-error {
+    background: var(--err);
+    border-color: var(--err);
+    color: #fff;
   }
 
   .spacer { flex: 1; }
@@ -413,6 +419,7 @@
       </div>
       <button id="join">Entrar</button>
       <button id="share" title="Copiar link de esta sala">Compartir</button>
+      <button id="save" title="Guardar el codigo en GitHub">💾 Guardar</button>
       <div class="spacer"></div>
       <div id="peers"></div>
       <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>

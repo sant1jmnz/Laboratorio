@@ -5,12 +5,37 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { setupWSConnection } from 'y-websocket/bin/utils';
 import { handleInteractiveConnection } from './interactive-run.js';
+import { isConfigured, loadSavedCode, saveCode } from './github-save.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
 const app = express();
+app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+app.get('/api/save-status', (_req, res) => {
+  res.json({ enabled: isConfigured() });
+});
+
+app.get('/api/saved/:room', async (req, res) => {
+  try {
+    const code = await loadSavedCode(req.params.room);
+    res.json({ code });
+  } catch {
+    res.status(500).json({ code: null });
+  }
+});
+
+app.post('/api/save', async (req, res) => {
+  const { room, code, author } = req.body ?? {};
+  if (typeof room !== 'string' || typeof code !== 'string') {
+    res.status(400).json({ ok: false, message: 'Falta room o code.' });
+    return;
+  }
+  const result = await saveCode(room, code, author);
+  res.status(result.ok ? 200 : 500).json(result);
+});
 
 const server = http.createServer(app);
 

@@ -26,10 +26,23 @@ Para compartir con otra persona en otra red, hay que exponer el puerto 3000 (por
 
 Este repo trae un `Dockerfile` y un `render.yaml` para desplegar en [Render](https://render.com) con un click (Blueprint). El servicio corre en Docker porque necesita `g++` instalado, algo que el runtime Node nativo de Render no trae.
 
+## Guardar el código en GitHub
+
+El botón **💾 Guardar** commitea el código de la sala actual a este mismo repo (como `saves/<sala>.cpp`, en una branch separada — `code-saves` por defecto — para no ensuciar el historial de desarrollo). Al volver a entrar a una sala, si hay una versión guardada la carga automáticamente en vez del código de ejemplo.
+
+Es opcional: sin configurar nada, el botón queda visible pero avisa que no está habilitado. Para activarlo hay que cargar estas variables de entorno en el servicio (en Render: **Environment** → **Add Environment Variable** — nunca las pongas en `render.yaml` ni las commitees):
+
+| Variable | Valor |
+|---|---|
+| `GITHUB_TOKEN` | Un [Personal Access Token](https://github.com/settings/tokens) (fine-grained, con permiso *Contents: Read and write* sobre este repo) |
+| `GITHUB_REPO` | `sant1jmnz/Laboratorio` |
+| `GITHUB_SAVE_BRANCH` | *(opcional)* nombre de la branch donde guardar. Por defecto `code-saves`, se crea sola si no existe. |
+
 ## Estructura
 
 - `server/index.js`: servidor Express + WebSocket. Rutea `/run-ws` a la terminal interactiva y todo lo demás (`/docs/<sala>`) a la sincronización Yjs.
 - `server/run-cpp.js`: compila el código C++ en un directorio temporal aislado (sin usar shell).
 - `server/interactive-run.js`: maneja las sesiones interactivas por WebSocket (spawn de la pty, límites de concurrencia, timeouts de inactividad y duración máxima).
+- `server/github-save.js`: guarda/carga el código de cada sala como archivo en este repo vía la API de GitHub.
 - `client/main.js`: lógica del editor (CodeMirror + Yjs + terminal xterm.js), compilada a `public/bundle.js` con `npm run build`.
 - `public/index.html`: estructura y estilos de la página.
