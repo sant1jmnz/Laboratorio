@@ -1,7 +1,7 @@
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import * as pty from 'node-pty';
-import { compileToBinary } from './run-cpp.js';
+import { prepareProgram } from './build.js';
 
 const MAX_CONCURRENT = 6;
 const IDLE_TIMEOUT_MS = 3 * 60_000; // sin entrada/salida por 3 min -> se corta
@@ -30,8 +30,8 @@ function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
-async function listGeneratedFiles(dir, binaryPath) {
-  const skip = new Set(['main.cpp', path.basename(binaryPath)]);
+async function listGeneratedFiles(dir, skipNames) {
+  const skip = new Set(skipNames);
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -40,7 +40,8 @@ async function listGeneratedFiles(dir, binaryPath) {
   }
   const files = [];
   for (const entry of entries) {
-    if (!entry.isFile() || skip.has(entry.name)) continue;
+    // Los .class los produce javac, no el programa del usuario.
+    if (!entry.isFile() || skip.has(entry.name) || entry.name.endsWith('.class')) continue;
     try {
       const info = await stat(path.join(dir, entry.name));
       files.push({ name: entry.name, size: info.size });
@@ -63,7 +64,7 @@ export function handleInteractiveConnection(ws) {
   let slotAcquired = false;
   let ptyProcess = null;
   let dir = null;
-  let binaryPath = null;
+  let ownedNames = [];
   let idleTimer = null;
   let hardTimer = null;
   let filesGraceTimer = null;
@@ -92,7 +93,7 @@ export function handleInteractiveConnection(ws) {
 
   const onProcessExit = async (exitCode) => {
     releaseProcess();
-    const files = await listGeneratedFiles(dir, binaryPath);
+    const files = await listGeneratedFiles(dir, ownedNames);
     send(ws, { type: 'exit', code: exitCode, files });
     filesGraceTimer = setTimeout(async () => {
       await removeDir();
@@ -127,32 +128,35 @@ export function handleInteractiveConnection(ws) {
       if (socketClosed) return;
 
       send(ws, { type: 'status', status: 'compiling' });
-      const compiled = await compileToBinary(code);
+      const prepared = await prepareProgram({ code, fileName: msg.fileName });
       if (socketClosed) {
-        if (compiled.ok) await rm(compiled.dir, { recursive: true, force: true }).catch(() => {});
+        if (prepared.ok) await rm(prepared.dir, { recursive: true, force: true }).catch(() => {});
         return;
       }
 
-      if (!compiled.ok) {
-        send(ws, { type: 'compile-error', message: compiled.message, output: compiled.output });
+      if (!prepared.ok) {
+        send(ws, { type: 'compile-error', message: prepared.message, output: prepared.output });
         releaseProcess();
         ws.close();
         return;
       }
 
-      dir = compiled.dir;
-      binaryPath = compiled.binaryPath;
-      if (compiled.warnings) send(ws, { type: 'compile-warnings', output: compiled.warnings });
+      dir = prepared.dir;
+      // Lo que ya estaba en el directorio antes de correr: no cuenta como
+      // "archivo generado por el programa".
+      ownedNames = [path.basename(prepared.sourcePath), path.basename(prepared.binaryPath)];
+      if (prepared.warnings) send(ws, { type: 'compile-warnings', output: prepared.warnings });
 
       const cols = Number.isInteger(msg.cols) ? msg.cols : 80;
       const rows = Number.isInteger(msg.rows) ? msg.rows : 24;
 
-      ptyProcess = pty.spawn(binaryPath, [], {
+      const [runCmd, runArgs] = prepared.argv;
+      ptyProcess = pty.spawn(runCmd, runArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: dir,
-        env: { PATH: process.env.PATH ?? '' },
+        env: { PATH: process.env.PATH ?? '', HOME: dir, LANG: 'C.UTF-8' },
       });
 
       send(ws, { type: 'status', status: 'running' });

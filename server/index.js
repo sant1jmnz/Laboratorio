@@ -8,6 +8,7 @@ import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
 import { handleInteractiveConnection } from './interactive-run.js';
 import { isConfigured, loadWorkspace, saveWorkspace } from './github-save.js';
 import { authRequired, checkPassword, issueToken, verifyToken } from './auth.js';
+import { languageSummaries } from './languages.js';
 
 // y-websocket/bin/utils (CJS) carga yjs via require(), que resuelve a un
 // build distinto (dist/yjs.cjs) del que usa `import 'yjs'` (dist/yjs.mjs).
@@ -53,6 +54,10 @@ function requireAuth(req, res, next) {
 
 app.get('/api/auth-status', (_req, res) => {
   res.json({ required: authRequired() });
+});
+
+app.get('/api/languages', (_req, res) => {
+  res.json({ languages: languageSummaries() });
 });
 
 app.post('/api/login', (req, res) => {

@@ -1,6 +1,18 @@
 # Editor colaborativo en tiempo real
 
-Editor de código C++ tipo VS Code donde varias personas editan a la vez y ven los cambios de las demás al instante (cursores incluidos, multi-archivo con explorador lateral), como Google Docs pero para código — con un botón para compilar y correr el programa en una terminal interactiva real (tipo OnlineGDB) y una clave de acceso opcional.
+Editor de código multi-lenguaje tipo VS Code donde varias personas editan a la vez y ven los cambios de las demás al instante (cursores incluidos, multi-archivo con explorador lateral), como Google Docs pero para código — con un botón para compilar y correr el programa en una terminal interactiva real (tipo OnlineGDB) y una clave de acceso opcional.
+
+## Lenguajes soportados
+
+| Lenguaje | Extensiones | Cómo corre |
+|---|---|---|
+| C++ | `.cpp` `.cc` `.cxx` | `g++ -std=c++20` |
+| C | `.c` | `gcc -std=c17` |
+| Python | `.py` | `python3 -u` |
+| JavaScript | `.js` `.mjs` | `node` |
+| Java | `.java` | `javac` + `java` |
+
+El lenguaje se detecta por la extensión del archivo activo: creás `script.py` en el explorador y "Ejecutar" ya lo corre con Python, sin configurar nada. El resaltado de sintaxis y el indicador de la barra de estado se ajustan solos.
 
 ## Cómo funciona
 
@@ -18,7 +30,9 @@ npm install
 npm start
 ```
 
-Abrí `http://localhost:3000` en varias pestañas o desde otras computadoras (usando la IP del server). Todos los que entren a la misma "sala" (campo de texto arriba a la izquierda, o `?room=nombre` en la URL) editan el mismo workspace en tiempo real: creá, renombrá o borrá archivos desde el explorador de la izquierda, cambiá entre ellos con un click.
+Abrí `http://localhost:3000` y ya estás en una sala nueva (se genera sola y queda en la URL). El botón **Invitar** copia el link: quien lo abra cae en la misma sala editando en vivo. **Nueva** arranca un workspace limpio, y el chip con el nombre de la sala se puede clickear para saltar a otra.
+
+Dentro de una sala: creá, renombrá o borrá archivos desde el explorador de la izquierda y cambiá entre ellos con un click.
 
 Para compartir con otra persona en otra red, hay que exponer el puerto 3000 (por ejemplo con un túnel como `ngrok http 3000`) o desplegar el server en algún hosting.
 
@@ -50,7 +64,8 @@ Nota: la persistencia en disco (y-leveldb) ya evita que se pierda algo por dejar
 
 - `server/index.js`: servidor Express + WebSocket. Rutea `/run-ws` a la terminal interactiva y todo lo demás (`/docs/<sala>`) a la sincronización Yjs; gatea ambos con la clave de acceso si está configurada.
 - `server/auth.js`: clave compartida + tokens de sesión firmados (HMAC), sin base de datos de usuarios.
-- `server/run-cpp.js`: compila el código C++ en un directorio temporal aislado (sin usar shell).
+- `server/languages.js`: registro de lenguajes (extensiones, comando de compilación y de ejecución de cada uno).
+- `server/build.js`: escribe el fuente en un directorio temporal aislado y lo compila si hace falta (sin usar shell).
 - `server/interactive-run.js`: maneja las sesiones interactivas por WebSocket (spawn de la pty, límites de concurrencia, timeouts de inactividad y duración máxima, listado/descarga de archivos generados).
 - `server/github-save.js`: guarda/carga el workspace completo de cada sala en este repo vía la Git Data API de GitHub (blobs + tree + commit, en un solo commit atómico).
 - `client/main.js`: lógica del editor (CodeMirror + Yjs + terminal xterm.js + explorador de archivos + login), compilada a `public/bundle.js` con `npm run build`.

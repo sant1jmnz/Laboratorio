@@ -5,6 +5,9 @@ import { indentUnit, HighlightStyle, syntaxHighlighting } from '@codemirror/lang
 import { tags as t } from '@lezer/highlight';
 import { basicSetup } from 'codemirror';
 import { cpp } from '@codemirror/lang-cpp';
+import { python } from '@codemirror/lang-python';
+import { javascript } from '@codemirror/lang-javascript';
+import { java } from '@codemirror/lang-java';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { yCollab } from 'y-codemirror.next';
@@ -42,6 +45,7 @@ const sidebarFileListEl = document.getElementById('file-list');
 const newFileBtn = document.getElementById('new-file-btn');
 const newFileRow = document.getElementById('new-file-row');
 const newFileInput = document.getElementById('new-file-input');
+const langIndicatorEl = document.getElementById('lang-indicator');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
@@ -469,7 +473,7 @@ function runCode() {
 
   socket.addEventListener('open', () => {
     socket.send(
-      JSON.stringify({ type: 'run', code, cols: term.cols, rows: term.rows })
+      JSON.stringify({ type: 'run', code, fileName: activeFile, cols: term.cols, rows: term.rows })
     );
   });
 
@@ -534,14 +538,45 @@ function fileYText(name) {
   return currentDoc.getText(`file:${name}`);
 }
 
+function extOf(name) {
+  const i = String(name).lastIndexOf('.');
+  return i === -1 ? '' : name.slice(i).toLowerCase();
+}
+
+// Modo de sintaxis de CodeMirror segun la extension. Los headers de C/C++
+// no se ejecutan solos pero se editan con el mismo modo que el .cpp.
+const SYNTAX_MODES = {
+  '.cpp': cpp, '.cc': cpp, '.cxx': cpp, '.c++': cpp,
+  '.c': cpp, '.h': cpp, '.hpp': cpp, '.hh': cpp,
+  '.py': python,
+  '.js': javascript, '.mjs': javascript,
+  '.java': java,
+};
+
+function syntaxForFile(name) {
+  const mode = SYNTAX_MODES[extOf(name)];
+  return mode ? [mode()] : [];
+}
+
+// Etiqueta del lenguaje para la barra de estado; se completa con lo que
+// reporta /api/languages, con un fallback razonable si todavia no cargo.
+let languageCatalog = [];
+function languageLabelFor(name) {
+  const ext = extOf(name);
+  const found = languageCatalog.find((l) => l.extensions.includes(ext));
+  if (found) return found.label;
+  if (['.h', '.hpp', '.hh'].includes(ext)) return 'Header C/C++';
+  return ext ? ext.slice(1).toUpperCase() : 'Texto';
+}
+
 function fileDotClass(name) {
-  const ext = name.split('.').pop().toLowerCase();
-  if (['h', 'hpp', 'hh'].includes(ext)) return 'header';
-  if (['cpp', 'cc', 'cxx', 'c'].includes(ext)) return '';
+  const ext = extOf(name);
+  if (['.h', '.hpp', '.hh'].includes(ext)) return 'header';
+  if (SYNTAX_MODES[ext]) return '';
   return 'other';
 }
 
-function createEditorForFile(ytext) {
+function createEditorForFile(ytext, fileName) {
   if (currentView) currentView.destroy();
   const state = EditorState.create({
     doc: ytext.toString(),
@@ -549,7 +584,7 @@ function createEditorForFile(ytext) {
       basicSetup,
       darkPlusTheme,
       syntaxHighlighting(darkPlusHighlight),
-      cpp(),
+      ...syntaxForFile(fileName),
       indentUnit.of('    '),
       keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
       cmHistory(),
@@ -565,7 +600,8 @@ function switchToFile(name) {
     return;
   }
   activeFile = name;
-  createEditorForFile(fileYText(name));
+  createEditorForFile(fileYText(name), name);
+  langIndicatorEl.textContent = languageLabelFor(name);
   renderFileList();
 }
 
@@ -666,7 +702,8 @@ function renameFile(oldName, rawNewName) {
 
   if (activeFile === oldName) {
     activeFile = newName;
-    createEditorForFile(newText);
+    createEditorForFile(newText, newName);
+    langIndicatorEl.textContent = languageLabelFor(newName);
   }
   renderFileList();
 }
@@ -761,6 +798,14 @@ function startApp() {
   roomInput.value = room;
   roomNameEl.textContent = room;
   joinRoom(room);
+
+  fetch('/api/languages')
+    .then((r) => r.json())
+    .then(({ languages }) => {
+      languageCatalog = languages || [];
+      if (activeFile) langIndicatorEl.textContent = languageLabelFor(activeFile);
+    })
+    .catch(() => {});
 
   authFetch('/api/save-status')
     .then((r) => r.json())
