@@ -17,3 +17,7 @@ services:
         sync: false
       - key: GITHUB_SAVE_BRANCH
         sync: false
+      # Clave compartida para entrar al editor (opcional). Sin esto la app
+      # queda abierta para cualquiera con el link.
+      - key: APP_PASSWORD
+        sync: false

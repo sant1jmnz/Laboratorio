@@ -194,18 +194,135 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    flex-direction: row;
+  }
+
+  /* Explorador de archivos, tipo VS Code */
+  #sidebar {
+    flex: none;
+    width: 210px;
+    display: flex;
+    flex-direction: column;
+    background: var(--tabbar-bg);
+    border-right: 1px solid var(--panel-border);
+  }
+
+  #sidebar-header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-dim);
+  }
+  #sidebar-header button {
+    margin-left: auto;
+    padding: 2px 6px;
+    font-size: 13px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+  }
+  #sidebar-header button:hover { background: #3a3a3a; color: #fff; }
+
+  #file-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 8px;
+  }
+
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    white-space: nowrap;
+    border-left: 2px solid transparent;
+  }
+  .file-row:hover { background: #2a2d2e; color: var(--text); }
+  .file-row.active {
+    background: #37373d;
+    color: #fff;
+    border-left-color: var(--focus);
+  }
+  .file-row .file-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: none;
+    background: #4ec9b0;
+  }
+  .file-row .file-dot.header { background: #569cd6; }
+  .file-row .file-dot.other { background: #6a6a6a; }
+  .file-row .fname {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-row .row-actions {
+    display: none;
+    flex: none;
+    gap: 2px;
+  }
+  .file-row:hover .row-actions { display: flex; }
+  .file-row .row-actions button {
+    padding: 1px 4px;
+    font-size: 11px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .file-row .row-actions button:hover { background: #4a4a4a; color: #fff; }
+
+  #new-file-row {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 14px;
+  }
+  #new-file-row.visible { display: flex; }
+  #new-file-row .file-dot { width: 7px; height: 7px; border-radius: 50%; background: #6a6a6a; flex: none; }
+  #new-file-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--editor-bg);
+    color: var(--text);
+    border: 1px solid var(--focus);
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 2px 5px;
+    outline: none;
+  }
+
+  #content-column {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
     flex-direction: column;
   }
 
-  /* Tira de pestañas de archivo, tipo OnlineGDB */
+  /* Tira de pestañas de archivos generados por el programa al correr */
   #file-tabs {
     flex: none;
-    display: flex;
+    display: none;
     align-items: stretch;
     background: var(--tabbar-bg);
     border-bottom: 1px solid var(--panel-border);
     overflow-x: auto;
   }
+  #file-tabs.visible { display: flex; }
 
   .file-tab {
     flex: none;
@@ -402,10 +519,70 @@
     header { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 8px; }
     .divider { display: none; }
     #room { width: 110px; }
+    #sidebar { width: 160px; }
   }
+
+  /* Pantalla de acceso con clave compartida */
+  #login-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--editor-bg);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  #login-overlay.visible { display: flex; }
+
+  #login-card {
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 28px;
+    background: var(--titlebar-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  #login-card .brand { justify-content: center; font-size: 15px; }
+  #login-card .brand-mark { width: 26px; height: 26px; font-size: 13px; border-radius: 6px; }
+  #login-card p { margin: 0; font-size: 12.5px; color: var(--text-dim); text-align: center; }
+  #login-password {
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 9px 10px;
+    font-family: var(--sans);
+    font-size: 13px;
+    outline: none;
+  }
+  #login-password:focus { border-color: var(--focus); }
+  #login-submit {
+    background: var(--button-bg);
+    border-color: var(--button-bg);
+    color: #fff;
+    justify-content: center;
+    padding: 9px;
+  }
+  #login-submit:hover { background: var(--button-hover); border-color: var(--button-hover); }
+  #login-error { font-size: 12px; color: var(--err); min-height: 15px; text-align: center; }
 </style>
 </head>
 <body>
+  <div id="login-overlay">
+    <form id="login-card">
+      <div class="brand">
+        <span class="brand-mark">{ }</span>
+        <span>Editor colaborativo</span>
+      </div>
+      <p>Esta sala esta protegida. Ingresá la clave para entrar.</p>
+      <input id="login-password" type="password" placeholder="Clave de acceso" autocomplete="current-password" autofocus />
+      <button type="submit" id="login-submit">Entrar</button>
+      <div id="login-error"></div>
+    </form>
+  </div>
+
   <div id="app">
     <header>
       <div class="brand">
@@ -425,30 +602,41 @@
       <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>
     </header>
     <main>
-      <div id="file-tabs">
-        <button class="file-tab active" id="tab-main" data-tab="main">main.cpp</button>
+      <div id="sidebar">
+        <div id="sidebar-header">
+          <span>Explorador</span>
+          <button id="new-file-btn" title="Nuevo archivo">+</button>
+        </div>
+        <div id="file-list"></div>
+        <div id="new-file-row">
+          <span class="file-dot"></span>
+          <input id="new-file-input" type="text" placeholder="nombre.cpp" spellcheck="false" autocomplete="off" />
+        </div>
       </div>
-      <div id="editor-wrap">
-        <div id="editor"></div>
-        <div id="boot-hint">Cargando editor…</div>
-        <div id="file-viewer">
-          <div id="file-viewer-toolbar">
-            <span class="fname" id="file-viewer-name"></span>
-            <span id="file-viewer-meta"></span>
-            <div class="spacer"></div>
-            <button id="file-viewer-download">⬇ Descargar</button>
+      <div id="content-column">
+        <div id="file-tabs"></div>
+        <div id="editor-wrap">
+          <div id="editor"></div>
+          <div id="boot-hint">Cargando editor…</div>
+          <div id="file-viewer">
+            <div id="file-viewer-toolbar">
+              <span class="fname" id="file-viewer-name"></span>
+              <span id="file-viewer-meta"></span>
+              <div class="spacer"></div>
+              <button id="file-viewer-download">⬇ Descargar</button>
+            </div>
+            <pre id="file-viewer-body"></pre>
           </div>
-          <pre id="file-viewer-body"></pre>
         </div>
-      </div>
-      <div id="output-panel">
-        <div class="panel-header">
-          <button id="panel-toggle" title="Colapsar/expandir">▾</button>
-          <span>Salida</span>
-          <span id="output-status">lista para ejecutar</span>
-        </div>
-        <div id="output-body">
-          <div id="terminal"></div>
+        <div id="output-panel">
+          <div class="panel-header">
+            <button id="panel-toggle" title="Colapsar/expandir">▾</button>
+            <span>Salida</span>
+            <span id="output-status">lista para ejecutar</span>
+          </div>
+          <div id="output-body">
+            <div id="terminal"></div>
+          </div>
         </div>
       </div>
     </main>

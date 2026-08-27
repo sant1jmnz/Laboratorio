@@ -11,6 +11,11 @@ import { yCollab } from 'y-codemirror.next';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
+const loginOverlay = document.getElementById('login-overlay');
+const loginCard = document.getElementById('login-card');
+const loginPassword = document.getElementById('login-password');
+const loginError = document.getElementById('login-error');
+
 const roomInput = document.getElementById('room');
 const joinBtn = document.getElementById('join');
 const shareBtn = document.getElementById('share');
@@ -26,18 +31,90 @@ const panelToggle = document.getElementById('panel-toggle');
 const outputStatus = document.getElementById('output-status');
 const terminalEl = document.getElementById('terminal');
 const fileTabsEl = document.getElementById('file-tabs');
-const tabMainBtn = document.getElementById('tab-main');
 const fileViewerEl = document.getElementById('file-viewer');
 const fileViewerNameEl = document.getElementById('file-viewer-name');
 const fileViewerMetaEl = document.getElementById('file-viewer-meta');
 const fileViewerBodyEl = document.getElementById('file-viewer-body');
 const fileViewerDownloadBtn = document.getElementById('file-viewer-download');
+const sidebarFileListEl = document.getElementById('file-list');
+const newFileBtn = document.getElementById('new-file-btn');
+const newFileRow = document.getElementById('new-file-row');
+const newFileInput = document.getElementById('new-file-input');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
 const userName = 'Usuario-' + Math.floor(Math.random() * 1000);
 
 const DEFAULT_CODE = '#include <iostream>\n\nint main() {\n    std::cout << "Hola mundo" << std::endl;\n    return 0;\n}\n';
+
+// ---------------------------------------------------------------------
+// Autenticacion: clave compartida opcional (APP_PASSWORD en el server).
+// ---------------------------------------------------------------------
+const AUTH_TOKEN_KEY = 'editorAuthToken';
+
+function getToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+function setToken(token) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+function clearToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function wsAuthParams() {
+  const token = getToken();
+  return token ? { token } : {};
+}
+
+async function authFetch(url, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: { ...(options.headers || {}), ...authHeaders() },
+  });
+  if (res.status === 401) {
+    clearToken();
+    showLogin('Tu sesion expiro. Ingresá la clave de nuevo.');
+  }
+  return res;
+}
+
+function showLogin(message) {
+  loginOverlay.classList.add('visible');
+  loginError.textContent = message || '';
+  loginPassword.value = '';
+  loginPassword.focus();
+}
+function hideLogin() {
+  loginOverlay.classList.remove('visible');
+}
+
+loginCard.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  loginError.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: loginPassword.value }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setToken(data.token);
+      hideLogin();
+      startApp();
+    } else {
+      loginError.textContent = data.message || 'Clave incorrecta.';
+    }
+  } catch {
+    loginError.textContent = 'Error de red.';
+  }
+});
 
 // Colores del tema "Dark+" de VS Code
 const darkPlusTheme = EditorView.theme(
@@ -102,13 +179,15 @@ const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
 term.open(terminalEl);
 fitAddon.fit();
-term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el código.');
+term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el archivo activo.');
 new ResizeObserver(() => fitAddon.fit()).observe(terminalEl);
 
 let currentView = null;
 let currentProvider = null;
 let currentDoc = null;
 let currentRoom = null;
+let filesArray = null;
+let activeFile = null;
 let runSocket = null;
 
 function getRoomFromUrl() {
@@ -228,19 +307,23 @@ function hexDump(bytes) {
   return lines.join('\n');
 }
 
-// name -> { size, bytes, isText } de los archivos ya pedidos en esta ejecucion
-const fileCache = new Map();
-let activeTab = 'main';
+// ---------------------------------------------------------------------
+// Pestañas de salida: archivos que el programa crea al correr (solo
+// lectura, texto o hex dump). Distinto del explorador de la izquierda,
+// que son los archivos fuente editables del workspace.
+// ---------------------------------------------------------------------
+const outputFileCache = new Map();
+let activeOutputTab = null;
 
-function showTab(name) {
-  activeTab = name;
-  fileViewerEl.classList.toggle('visible', name !== 'main');
+function showOutputTab(name) {
+  activeOutputTab = name;
+  fileViewerEl.classList.toggle('visible', name !== null);
   for (const btn of fileTabsEl.querySelectorAll('.file-tab')) {
     btn.classList.toggle('active', btn.dataset.tab === name);
   }
-  if (name === 'main') return;
+  if (name === null) return;
 
-  const cached = fileCache.get(name);
+  const cached = outputFileCache.get(name);
   fileViewerNameEl.textContent = name;
   if (!cached) {
     fileViewerMetaEl.textContent = 'cargando…';
@@ -255,33 +338,34 @@ function showTab(name) {
   }
 }
 
-function closeFileTab(name, btn) {
+function closeOutputTab(name, btn) {
   btn.remove();
-  fileCache.delete(name);
-  if (activeTab === name) showTab('main');
+  outputFileCache.delete(name);
+  fileTabsEl.classList.toggle('visible', fileTabsEl.children.length > 0);
+  if (activeOutputTab === name) showOutputTab(null);
 }
 
-function fetchFileContent(socket, name) {
-  if (fileCache.has(name) || !socket || socket.readyState !== WebSocket.OPEN) return;
+function fetchOutputFileContent(socket, name) {
+  if (outputFileCache.has(name) || !socket || socket.readyState !== WebSocket.OPEN) return;
 
   const onMessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type !== 'file-content' || msg.name !== name) return;
     socket.removeEventListener('message', onMessage);
     if (msg.error) {
-      fileCache.set(name, { size: 0, bytes: new Uint8Array(), isText: true, text: `(${msg.error})` });
+      outputFileCache.set(name, { size: 0, bytes: new Uint8Array(), isText: true, text: `(${msg.error})` });
     } else {
       const bytes = base64ToBytes(msg.base64);
       const text = decodeAsText(bytes);
-      fileCache.set(name, { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text });
+      outputFileCache.set(name, { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text });
     }
-    if (activeTab === name) showTab(name);
+    if (activeOutputTab === name) showOutputTab(name);
   };
   socket.addEventListener('message', onMessage);
   socket.send(JSON.stringify({ type: 'get-file', name }));
 }
 
-function addFileTab(socket, name) {
+function addOutputTab(socket, name) {
   if (fileTabsEl.querySelector(`.file-tab[data-tab="${CSS.escape(name)}"]`)) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -296,48 +380,53 @@ function addFileTab(socket, name) {
   btn.append(nameSpan, closeSpan);
   btn.addEventListener('click', (e) => {
     if (e.target.closest('.tab-close')) {
-      closeFileTab(name, btn);
+      closeOutputTab(name, btn);
       return;
     }
-    showTab(name);
-    fetchFileContent(socket, name);
+    showOutputTab(name);
+    fetchOutputFileContent(socket, name);
   });
   fileTabsEl.appendChild(btn);
+  fileTabsEl.classList.add('visible');
 }
 
-function resetFileTabs() {
-  fileCache.clear();
-  for (const btn of fileTabsEl.querySelectorAll('.file-tab:not(#tab-main)')) btn.remove();
-  showTab('main');
+function resetOutputTabs() {
+  outputFileCache.clear();
+  fileTabsEl.innerHTML = '';
+  fileTabsEl.classList.remove('visible');
+  showOutputTab(null);
 }
 
 function renderGeneratedFiles(files, socket) {
-  for (const file of files) addFileTab(socket, file.name);
-  if (files.length > 0 && activeTab === 'main') {
-    showTab(files[0].name);
-    fetchFileContent(socket, files[0].name);
+  for (const file of files) addOutputTab(socket, file.name);
+  if (files.length > 0 && activeOutputTab === null) {
+    showOutputTab(files[0].name);
+    fetchOutputFileContent(socket, files[0].name);
   }
 }
 
-tabMainBtn.addEventListener('click', () => showTab('main'));
 fileViewerDownloadBtn.addEventListener('click', () => {
-  const cached = fileCache.get(activeTab);
-  if (cached) downloadBytes(activeTab, cached.bytes);
+  const cached = outputFileCache.get(activeOutputTab);
+  if (cached) downloadBytes(activeOutputTab, cached.bytes);
 });
 
+// ---------------------------------------------------------------------
+// Compilar / ejecutar (compila el archivo activo en el editor)
+// ---------------------------------------------------------------------
 function runCode() {
-  if (!currentDoc) return;
-  const code = currentDoc.getText('codemirror').toString();
+  if (!currentDoc || !activeFile) return;
+  const code = fileYText(activeFile).toString();
 
   runSocket?.close();
   term.reset();
   setPanelCollapsed(false);
   setOutputStatus('conectando…', 'busy');
-  resetFileTabs();
+  resetOutputTabs();
   runBtn.disabled = true;
 
   const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const socket = new WebSocket(`${wsProtocol}://${location.host}/run-ws`);
+  const qs = new URLSearchParams(wsAuthParams()).toString();
+  const socket = new WebSocket(`${wsProtocol}://${location.host}/run-ws${qs ? '?' + qs : ''}`);
   runSocket = socket;
 
   const inputDisposable = term.onData((data) => {
@@ -406,6 +495,173 @@ function runCode() {
   });
 }
 
+// ---------------------------------------------------------------------
+// Workspace multi-archivo (explorador tipo VS Code, por sala)
+// ---------------------------------------------------------------------
+function fileYText(name) {
+  return currentDoc.getText(`file:${name}`);
+}
+
+function fileDotClass(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['h', 'hpp', 'hh'].includes(ext)) return 'header';
+  if (['cpp', 'cc', 'cxx', 'c'].includes(ext)) return '';
+  return 'other';
+}
+
+function createEditorForFile(ytext) {
+  if (currentView) currentView.destroy();
+  const state = EditorState.create({
+    doc: ytext.toString(),
+    extensions: [
+      basicSetup,
+      darkPlusTheme,
+      syntaxHighlighting(darkPlusHighlight),
+      cpp(),
+      indentUnit.of('    '),
+      keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+      cmHistory(),
+      yCollab(ytext, currentProvider.awareness),
+    ],
+  });
+  currentView = new EditorView({ state, parent: editorEl });
+}
+
+function switchToFile(name) {
+  if (!name || name === activeFile) {
+    renderFileList();
+    return;
+  }
+  activeFile = name;
+  createEditorForFile(fileYText(name));
+  renderFileList();
+}
+
+function renderFileList() {
+  sidebarFileListEl.innerHTML = '';
+  if (!filesArray) return;
+  for (const name of filesArray.toArray()) {
+    const row = document.createElement('div');
+    row.className = 'file-row' + (name === activeFile ? ' active' : '');
+
+    const dot = document.createElement('span');
+    dot.className = 'file-dot ' + fileDotClass(name);
+
+    const fname = document.createElement('span');
+    fname.className = 'fname';
+    fname.textContent = name;
+    fname.title = name;
+
+    const actions = document.createElement('span');
+    actions.className = 'row-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.textContent = '✏';
+    renameBtn.title = 'Renombrar';
+    renameBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const next = window.prompt('Nuevo nombre:', name);
+      if (next) renameFile(name, next);
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Eliminar';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteFile(name);
+    });
+
+    actions.append(renameBtn, delBtn);
+    row.append(dot, fname, actions);
+    row.addEventListener('click', () => switchToFile(name));
+    sidebarFileListEl.appendChild(row);
+  }
+}
+
+function createFile(rawName) {
+  const name = rawName.trim();
+  if (!name) return;
+  const names = filesArray.toArray();
+  if (names.includes(name)) {
+    switchToFile(name);
+    return;
+  }
+  filesArray.push([name]);
+  switchToFile(name);
+}
+
+function deleteFile(name) {
+  const names = filesArray.toArray();
+  if (names.length <= 1) {
+    window.alert('No podés borrar el único archivo del workspace.');
+    return;
+  }
+  if (!window.confirm(`¿Eliminar "${name}"? Esta accion no se puede deshacer.`)) return;
+  const idx = names.indexOf(name);
+  if (idx === -1) return;
+  const yt = fileYText(name);
+  yt.delete(0, yt.length);
+  filesArray.delete(idx, 1);
+  if (activeFile === name) {
+    const remaining = filesArray.toArray();
+    switchToFile(remaining[0]);
+  } else {
+    renderFileList();
+  }
+}
+
+function renameFile(oldName, rawNewName) {
+  const newName = rawNewName.trim();
+  if (!newName || newName === oldName) return;
+  const names = filesArray.toArray();
+  if (names.includes(newName)) {
+    window.alert('Ya existe un archivo con ese nombre.');
+    return;
+  }
+  const idx = names.indexOf(oldName);
+  if (idx === -1) return;
+
+  const oldText = fileYText(oldName);
+  const newText = fileYText(newName);
+  newText.insert(0, oldText.toString());
+  oldText.delete(0, oldText.length);
+
+  filesArray.delete(idx, 1);
+  filesArray.insert(idx, [newName]);
+
+  if (activeFile === oldName) {
+    activeFile = newName;
+    createEditorForFile(newText);
+  }
+  renderFileList();
+}
+
+function showNewFileRow() {
+  newFileRow.classList.add('visible');
+  newFileInput.value = '';
+  newFileInput.focus();
+}
+function hideNewFileRow() {
+  newFileRow.classList.remove('visible');
+}
+
+newFileBtn.addEventListener('click', showNewFileRow);
+newFileInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    createFile(newFileInput.value);
+    hideNewFileRow();
+  } else if (e.key === 'Escape') {
+    hideNewFileRow();
+  }
+});
+newFileInput.addEventListener('blur', hideNewFileRow);
+
+// ---------------------------------------------------------------------
+// Conexion a la sala
+// ---------------------------------------------------------------------
 function joinRoom(room) {
   currentRoom = room;
   bootHintEl.classList.remove('hidden');
@@ -415,11 +671,16 @@ function joinRoom(room) {
   if (currentProvider) currentProvider.destroy();
   if (currentDoc) currentDoc.destroy();
   if (currentView) currentView.destroy();
+  activeFile = null;
+  resetOutputTabs();
 
   const ydoc = new Y.Doc();
   currentDoc = ydoc;
+  filesArray = ydoc.getArray('files');
   const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const provider = new WebsocketProvider(`${wsProtocol}://${location.host}`, `docs/${room}`, ydoc);
+  const provider = new WebsocketProvider(`${wsProtocol}://${location.host}`, `docs/${room}`, ydoc, {
+    params: wsAuthParams(),
+  });
   currentProvider = provider;
 
   provider.awareness.setLocalStateField('user', { name: userName, color: userColor, colorLight: userColor + '33' });
@@ -432,55 +693,63 @@ function joinRoom(room) {
     else setStatus('offline', 'Desconectado');
   });
 
-  const ytext = ydoc.getText('codemirror');
+  filesArray.observe(() => renderFileList());
 
   // Solo sembramos contenido una vez que confirmamos con el servidor que el
-  // documento esta vacio, para no pisar/duplicar contenido de otros
+  // workspace esta vacio, para no pisar/duplicar contenido de otros
   // clientes que se conecten al mismo tiempo. Si hay una version guardada
   // en GitHub para esta sala, arrancamos con esa en vez del ejemplo.
   provider.once('sync', async (isSynced) => {
-    if (isSynced && ytext.length === 0) {
-      let seed = DEFAULT_CODE;
+    if (isSynced && filesArray.length === 0) {
+      let seedFiles = [{ name: 'main.cpp', content: DEFAULT_CODE }];
       try {
-        const res = await fetch(`/api/saved/${encodeURIComponent(room)}`);
+        const res = await authFetch(`/api/saved/${encodeURIComponent(room)}`);
         const data = await res.json();
-        if (data.code) seed = data.code;
+        if (Array.isArray(data.files) && data.files.length > 0) seedFiles = data.files;
       } catch {
         // sin conexion con la API de guardado: seguimos con el ejemplo por defecto
       }
-      if (ytext.length === 0) ytext.insert(0, seed);
+      if (filesArray.length === 0) {
+        for (const f of seedFiles) {
+          filesArray.push([f.name]);
+          fileYText(f.name).insert(0, f.content);
+        }
+      }
+    }
+    if (!activeFile) {
+      const first = filesArray.toArray()[0];
+      if (first) switchToFile(first);
     }
     bootHintEl.classList.add('hidden');
   });
-
-  const state = EditorState.create({
-    doc: ytext.toString(),
-    extensions: [
-      basicSetup,
-      darkPlusTheme,
-      syntaxHighlighting(darkPlusHighlight),
-      cpp(),
-      indentUnit.of('    '),
-      keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
-      cmHistory(),
-      yCollab(ytext, provider.awareness),
-    ],
-  });
-
-  currentView = new EditorView({ state, parent: editorEl });
 }
 
-roomInput.value = getRoomFromUrl();
-joinRoom(roomInput.value);
+function startApp() {
+  roomInput.value = getRoomFromUrl();
+  joinRoom(roomInput.value);
 
-fetch('/api/save-status')
-  .then((r) => r.json())
-  .then(({ enabled }) => {
-    if (!enabled) {
-      saveBtn.title = 'El guardado en GitHub no esta configurado en este servidor (falta GITHUB_TOKEN/GITHUB_REPO).';
+  authFetch('/api/save-status')
+    .then((r) => r.json())
+    .then(({ enabled }) => {
+      if (!enabled) {
+        saveBtn.title = 'El guardado en GitHub no esta configurado en este servidor (falta GITHUB_TOKEN/GITHUB_REPO).';
+      }
+    })
+    .catch(() => {});
+}
+
+async function boot() {
+  try {
+    const { required } = await fetch('/api/auth-status').then((r) => r.json());
+    if (required && !getToken()) {
+      showLogin();
+      return;
     }
-  })
-  .catch(() => {});
+  } catch {
+    // sin conexion: intentamos arrancar igual, joinRoom/authFetch avisaran si falla
+  }
+  startApp();
+}
 
 joinBtn.addEventListener('click', () => {
   const room = roomInput.value.trim() || 'general';
@@ -493,18 +762,18 @@ roomInput.addEventListener('keydown', (e) => {
 });
 
 async function saveCurrentCode() {
-  if (!currentDoc || !currentRoom) return;
-  const code = currentDoc.getText('codemirror').toString();
+  if (!currentDoc || !currentRoom || !filesArray) return;
+  const files = filesArray.toArray().map((name) => ({ name, content: fileYText(name).toString() }));
 
   saveBtn.disabled = true;
   saveBtn.classList.remove('saved', 'save-error');
   saveBtn.textContent = 'Guardando…';
 
   try {
-    const res = await fetch('/api/save', {
+    const res = await authFetch('/api/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ room: currentRoom, code, author: userName }),
+      body: JSON.stringify({ room: currentRoom, files, author: userName }),
     });
     const result = await res.json();
     if (result.ok) {
@@ -540,3 +809,5 @@ window.addEventListener('keydown', (e) => {
     runCode();
   }
 });
+
+boot();
