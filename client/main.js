@@ -24,6 +24,7 @@ const outputPanel = document.getElementById('output-panel');
 const panelToggle = document.getElementById('panel-toggle');
 const outputStatus = document.getElementById('output-status');
 const terminalEl = document.getElementById('terminal');
+const generatedFilesEl = document.getElementById('generated-files');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
@@ -161,6 +162,58 @@ function setOutputStatus(text, className) {
   outputStatus.className = className;
 }
 
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function downloadBase64(name, base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderGeneratedFiles(files, socket) {
+  generatedFilesEl.innerHTML = '';
+  generatedFilesEl.classList.toggle('visible', files.length > 0);
+  for (const file of files) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'file-chip';
+    chip.title = `Descargar ${file.name}`;
+    chip.innerHTML = `⬇ ${file.name} <span class="file-size">${formatBytes(file.size)}</span>`;
+    chip.addEventListener('click', () => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      chip.disabled = true;
+      const onMessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'file-content' && msg.name === file.name) {
+          socket.removeEventListener('message', onMessage);
+          chip.disabled = false;
+          if (msg.error) {
+            setOutputStatus(`no se pudo leer ${file.name}`, 'err');
+            return;
+          }
+          downloadBase64(file.name, msg.base64);
+        }
+      };
+      socket.addEventListener('message', onMessage);
+      socket.send(JSON.stringify({ type: 'get-file', name: file.name }));
+    });
+    generatedFilesEl.appendChild(chip);
+  }
+}
+
 function runCode() {
   if (!currentDoc) return;
   const code = currentDoc.getText('codemirror').toString();
@@ -169,6 +222,7 @@ function runCode() {
   term.reset();
   setPanelCollapsed(false);
   setOutputStatus('conectando…', 'busy');
+  renderGeneratedFiles([], null);
   runBtn.disabled = true;
 
   const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -222,6 +276,7 @@ function runCode() {
           msg.code === 0 ? 'terminado' : `terminado (codigo ${msg.code})`,
           msg.code === 0 ? 'ok' : 'err'
         );
+        renderGeneratedFiles(msg.files || [], socket);
         runBtn.disabled = false;
         break;
       }
