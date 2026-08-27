@@ -2,7 +2,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
-import { javascript } from '@codemirror/lang-javascript';
+import { cpp } from '@codemirror/lang-cpp';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { yCollab } from 'y-codemirror.next';
@@ -51,12 +51,15 @@ function joinRoom(room) {
   });
 
   const ytext = ydoc.getText('codemirror');
+  if (ytext.length === 0) {
+    ytext.insert(0, '#include <iostream>\n\nint main() {\n    std::cout << "Hola mundo" << std::endl;\n    return 0;\n}\n');
+  }
 
   const state = EditorState.create({
     doc: ytext.toString(),
     extensions: [
       basicSetup,
-      javascript(),
+      cpp(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       history(),
       yCollab(ytext, provider.awareness),
