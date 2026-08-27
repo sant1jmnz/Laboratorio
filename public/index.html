@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Editor colaborativo C++</title>
 <link rel="stylesheet" href="/fonts/cascadia-mono.css" />
+<link rel="stylesheet" href="/vendor/xterm.css" />
 <style>
   :root {
     color-scheme: dark;
@@ -268,46 +269,14 @@
   }
   #output-panel.collapsed #output-body { display: none; }
 
-  #output-text {
+  #terminal {
     flex: 1;
     min-width: 0;
-    margin: 0;
-    padding: 10px 12px;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--text);
+    padding: 8px 10px 0;
+    overflow: hidden;
   }
-  #output-text .err-line { color: var(--err); }
-  #output-text .dim-line { color: var(--text-faint); }
-
-  #stdin-col {
-    flex: none;
-    width: 240px;
-    border-left: 1px solid var(--panel-border);
-    display: flex;
-    flex-direction: column;
-  }
-  #stdin-col label {
-    font-size: 11px;
-    color: var(--text-dim);
-    padding: 8px 10px 4px;
-  }
-  #stdin {
-    flex: 1;
-    resize: none;
-    background: var(--editor-bg);
-    color: var(--text);
-    border: none;
-    outline: none;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    padding: 0 10px 10px;
-    line-height: 1.5;
-  }
+  #terminal .xterm { height: 100%; }
+  #terminal .xterm-viewport { overflow-y: auto !important; }
 
   footer#statusbar {
     flex: none;
@@ -340,7 +309,6 @@
     header { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 8px; }
     .divider { display: none; }
     #room { width: 110px; }
-    #stdin-col { width: 160px; }
   }
 </style>
 </head>
@@ -374,11 +342,7 @@
           <span id="output-status">lista para ejecutar</span>
         </div>
         <div id="output-body">
-          <pre id="output-text">Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el código.</pre>
-          <div id="stdin-col">
-            <label for="stdin">Entrada estándar (stdin)</label>
-            <textarea id="stdin" spellcheck="false" placeholder="Se envía al programa antes de ejecutarlo"></textarea>
-          </div>
+          <div id="terminal"></div>
         </div>
       </div>
     </main>

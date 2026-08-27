@@ -8,6 +8,8 @@ import { cpp } from '@codemirror/lang-cpp';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { yCollab } from 'y-codemirror.next';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 
 const roomInput = document.getElementById('room');
 const joinBtn = document.getElementById('join');
@@ -21,8 +23,7 @@ const statusTextEl = document.getElementById('status-text');
 const outputPanel = document.getElementById('output-panel');
 const panelToggle = document.getElementById('panel-toggle');
 const outputStatus = document.getElementById('output-status');
-const outputText = document.getElementById('output-text');
-const stdinEl = document.getElementById('stdin');
+const terminalEl = document.getElementById('terminal');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
@@ -78,10 +79,28 @@ const darkPlusHighlight = HighlightStyle.define([
   { tag: t.invalid, color: '#f14c4c' },
 ]);
 
+const term = new Terminal({
+  convertEol: true,
+  fontFamily: "'Cascadia Mono', ui-monospace, Consolas, Menlo, monospace",
+  fontSize: 13,
+  theme: {
+    background: '#1e1e1e',
+    foreground: '#d4d4d4',
+    cursor: '#aeafad',
+    selectionBackground: '#264f78',
+  },
+});
+const fitAddon = new FitAddon();
+term.loadAddon(fitAddon);
+term.open(terminalEl);
+fitAddon.fit();
+term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el código.');
+new ResizeObserver(() => fitAddon.fit()).observe(terminalEl);
+
 let currentView = null;
 let currentProvider = null;
 let currentDoc = null;
-let runAbortController = null;
+let runSocket = null;
 
 function getRoomFromUrl() {
   const params = new URLSearchParams(location.search);
@@ -137,77 +156,88 @@ function setPanelCollapsed(collapsed) {
   panelToggle.textContent = collapsed ? '▸' : '▾';
 }
 
-function renderOutput(result) {
-  outputText.innerHTML = '';
-  const append = (text, className) => {
-    const span = document.createElement('span');
-    if (className) span.className = className;
-    span.textContent = text;
-    outputText.appendChild(span);
-  };
-
-  if (result.stage === 'validate') {
-    append(result.message, 'err-line');
-    return;
-  }
-
-  if (result.stage === 'compile') {
-    append('Error de compilacion:\n', 'err-line');
-    append(result.output || result.message);
-    return;
-  }
-
-  if (result.compileWarnings) {
-    append(result.compileWarnings, 'dim-line');
-    append('\n');
-  }
-  if (result.stdout) append(result.stdout);
-  if (result.stderr) append(result.stderr, 'err-line');
-  if (result.timedOut) append('\n[el programa tardo demasiado y se cancelo]', 'err-line');
-  if (result.truncated) append('\n[salida truncada por ser demasiado larga]', 'dim-line');
-  if (!result.stdout && !result.stderr && !result.timedOut) {
-    append(`(sin salida — el programa termino con codigo ${result.exitCode})`, 'dim-line');
-  }
+function setOutputStatus(text, className) {
+  outputStatus.textContent = text;
+  outputStatus.className = className;
 }
 
-async function runCode() {
+function runCode() {
   if (!currentDoc) return;
   const code = currentDoc.getText('codemirror').toString();
 
-  runAbortController?.abort();
-  const controller = new AbortController();
-  runAbortController = controller;
-
-  runBtn.disabled = true;
+  runSocket?.close();
+  term.reset();
   setPanelCollapsed(false);
-  outputStatus.textContent = 'compilando…';
-  outputStatus.className = 'busy';
-  outputText.textContent = '';
+  setOutputStatus('conectando…', 'busy');
+  runBtn.disabled = true;
 
-  try {
-    const res = await fetch('/api/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, stdin: stdinEl.value }),
-      signal: controller.signal,
-    });
-    const result = await res.json();
-    renderOutput(result);
-    outputStatus.textContent =
-      result.stage === 'run' && result.ok
-        ? `terminado (codigo ${result.exitCode})`
-        : result.stage === 'run'
-          ? `termino con error (codigo ${result.exitCode})`
-          : 'fallo la compilacion';
-    outputStatus.className = result.ok ? 'ok' : 'err';
-  } catch (err) {
-    if (err.name === 'AbortError') return;
-    outputText.textContent = 'No se pudo contactar al servidor para compilar.';
-    outputStatus.textContent = 'error de red';
-    outputStatus.className = 'err';
-  } finally {
+  const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${wsProtocol}://${location.host}/run-ws`);
+  runSocket = socket;
+
+  const inputDisposable = term.onData((data) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'input', data }));
+    }
+  });
+
+  socket.addEventListener('open', () => {
+    socket.send(
+      JSON.stringify({ type: 'run', code, cols: term.cols, rows: term.rows })
+    );
+  });
+
+  socket.addEventListener('message', (event) => {
+    const msg = JSON.parse(event.data);
+    switch (msg.type) {
+      case 'status':
+        if (msg.status === 'queued') setOutputStatus('en cola…', 'busy');
+        else if (msg.status === 'compiling') setOutputStatus('compilando…', 'busy');
+        else if (msg.status === 'running') {
+          setOutputStatus('ejecutando', 'busy');
+          runBtn.disabled = false;
+        }
+        break;
+      case 'compile-warnings':
+        term.write(msg.output.replace(/\n/g, '\r\n'));
+        break;
+      case 'compile-error':
+        setOutputStatus('fallo la compilacion', 'err');
+        term.write('\x1b[31mError de compilacion:\x1b[0m\r\n');
+        term.write((msg.output || msg.message).replace(/\n/g, '\r\n'));
+        runBtn.disabled = false;
+        break;
+      case 'data':
+        term.write(msg.data);
+        break;
+      case 'exit': {
+        const reasonText =
+          msg.reason === 'idle'
+            ? '\r\n\x1b[2m[sesion cerrada por inactividad]\x1b[0m'
+            : msg.reason === 'timeout'
+              ? '\r\n\x1b[31m[tiempo maximo de ejecucion alcanzado]\x1b[0m'
+              : `\r\n\x1b[2m[proceso terminado, codigo ${msg.code}]\x1b[0m`;
+        term.write(reasonText);
+        setOutputStatus(
+          msg.code === 0 ? 'terminado' : `terminado (codigo ${msg.code})`,
+          msg.code === 0 ? 'ok' : 'err'
+        );
+        runBtn.disabled = false;
+        break;
+      }
+    }
+  });
+
+  const onClose = () => {
+    inputDisposable.dispose();
     runBtn.disabled = false;
-  }
+    if (runSocket === socket) runSocket = null;
+  };
+  socket.addEventListener('close', onClose);
+  socket.addEventListener('error', () => {
+    setOutputStatus('error de conexion', 'err');
+    term.write('\r\n\x1b[31m[no se pudo conectar con el servidor de ejecucion]\x1b[0m');
+  });
 }
 
 function joinRoom(room) {
