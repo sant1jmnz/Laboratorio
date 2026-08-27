@@ -17,7 +17,9 @@ const loginPassword = document.getElementById('login-password');
 const loginError = document.getElementById('login-error');
 
 const roomInput = document.getElementById('room');
-const joinBtn = document.getElementById('join');
+const roomChip = document.getElementById('room-chip');
+const roomNameEl = document.getElementById('room-name');
+const newRoomBtn = document.getElementById('new-room');
 const shareBtn = document.getElementById('share');
 const saveBtn = document.getElementById('save');
 const runBtn = document.getElementById('run');
@@ -190,9 +192,39 @@ let filesArray = null;
 let activeFile = null;
 let runSocket = null;
 
+// Salas sin friccion: si entras sin ?room, se genera una nueva y se
+// escribe en la URL con replaceState (sin ensuciar el historial). Asi
+// "entrar y compartir el link" alcanza, no hay que inventar un nombre.
+const ROOM_ADJETIVOS = [
+  'azul', 'rojo', 'verde', 'dorado', 'plata', 'rapido', 'lento', 'claro',
+  'oscuro', 'suave', 'firme', 'nuevo', 'largo', 'corto', 'alto', 'bajo',
+  'libre', 'sabio', 'noble', 'fresco', 'calmo', 'agudo', 'tibio', 'puro',
+];
+const ROOM_SUSTANTIVOS = [
+  'tigre', 'lobo', 'aguila', 'delfin', 'puma', 'zorro', 'halcon', 'ciervo',
+  'bosque', 'rio', 'monte', 'valle', 'campo', 'lago', 'costa', 'nube',
+  'faro', 'puerto', 'sendero', 'cometa', 'astro', 'norte', 'sur', 'este',
+];
+
+function pick(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function generateRoomId() {
+  const n = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  return `${pick(ROOM_ADJETIVOS)}-${pick(ROOM_SUSTANTIVOS)}-${n}`;
+}
+
 function getRoomFromUrl() {
   const params = new URLSearchParams(location.search);
-  return params.get('room') || 'general';
+  const existing = params.get('room');
+  if (existing) return existing;
+
+  const room = generateRoomId();
+  const url = new URL(location.href);
+  url.searchParams.set('room', room);
+  window.history.replaceState({}, '', url);
+  return room;
 }
 
 function setRoomInUrl(room) {
@@ -234,7 +266,7 @@ async function copyShareLink() {
   shareBtn.textContent = '¡Copiado!';
   shareBtn.classList.add('copied');
   setTimeout(() => {
-    shareBtn.textContent = 'Compartir';
+    shareBtn.textContent = 'Invitar';
     shareBtn.classList.remove('copied');
   }, 1500);
 }
@@ -725,8 +757,10 @@ function joinRoom(room) {
 }
 
 function startApp() {
-  roomInput.value = getRoomFromUrl();
-  joinRoom(roomInput.value);
+  const room = getRoomFromUrl();
+  roomInput.value = room;
+  roomNameEl.textContent = room;
+  joinRoom(room);
 
   authFetch('/api/save-status')
     .then((r) => r.json())
@@ -751,15 +785,43 @@ async function boot() {
   startApp();
 }
 
-joinBtn.addEventListener('click', () => {
-  const room = roomInput.value.trim() || 'general';
-  setRoomInUrl(room);
-  joinRoom(room);
-});
+function goToRoom(room) {
+  const name = room.trim();
+  if (!name || name === currentRoom) return;
+  setRoomInUrl(name);
+  roomInput.value = name;
+  roomNameEl.textContent = name;
+  joinRoom(name);
+}
+
+// El chip muestra la sala actual; al clickearlo se convierte en un input
+// para saltar a otra sala escribiendo su nombre.
+function openRoomEditor() {
+  roomInput.value = currentRoom ?? '';
+  roomInput.hidden = false;
+  roomChip.hidden = true;
+  roomInput.focus();
+  roomInput.select();
+}
+
+function closeRoomEditor() {
+  roomInput.hidden = true;
+  roomChip.hidden = false;
+}
+
+roomChip.addEventListener('click', openRoomEditor);
 
 roomInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') joinBtn.click();
+  if (e.key === 'Enter') {
+    goToRoom(roomInput.value);
+    closeRoomEditor();
+  } else if (e.key === 'Escape') {
+    closeRoomEditor();
+  }
 });
+roomInput.addEventListener('blur', closeRoomEditor);
+
+newRoomBtn.addEventListener('click', () => goToRoom(generateRoomId()));
 
 async function saveCurrentCode() {
   if (!currentDoc || !currentRoom || !filesArray) return;
