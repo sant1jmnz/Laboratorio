@@ -100,7 +100,7 @@ export async function compileAndRun(code, stdin) {
 
     const compile = await execFileAsync(
       'g++',
-      ['-O2', '-std=c++17', '-Wall', sourcePath, '-o', binaryPath],
+      ['-O2', '-std=c++20', '-Wall', sourcePath, '-o', binaryPath],
       { timeout: COMPILE_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES }
     );
 
