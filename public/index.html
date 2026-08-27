@@ -191,10 +191,56 @@
     flex-direction: column;
   }
 
+  /* Tira de pestañas de archivo, tipo OnlineGDB */
+  #file-tabs {
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    background: var(--tabbar-bg);
+    border-bottom: 1px solid var(--panel-border);
+    overflow-x: auto;
+  }
+
+  .file-tab {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px 7px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--panel-border);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .file-tab:hover { background: #2d2d2d; color: var(--text); }
+  .file-tab.active {
+    background: var(--editor-bg);
+    color: #fff;
+    box-shadow: inset 0 -2px 0 var(--focus);
+  }
+  .file-tab .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    color: var(--text-faint);
+    font-size: 13px;
+    line-height: 1;
+  }
+  .file-tab .tab-close:hover { background: #4a4a4a; color: #fff; }
+
   #editor-wrap {
     flex: 1;
     min-height: 0;
     position: relative;
+    display: flex;
+    flex-direction: column;
   }
 
   #editor { height: 100%; }
@@ -216,6 +262,45 @@
     background: var(--editor-bg);
   }
   #boot-hint.hidden { opacity: 0; pointer-events: none; }
+
+  /* Visor de archivo generado (texto o hex dump) */
+  #file-viewer {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: var(--editor-bg);
+    flex-direction: column;
+  }
+  #file-viewer.visible { display: flex; }
+
+  #file-viewer-toolbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  #file-viewer-toolbar .fname { color: var(--text); font-family: var(--mono); }
+  #file-viewer-toolbar button { padding: 4px 10px; font-size: 11.5px; }
+
+  #file-viewer-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre;
+    color: var(--text);
+  }
+  #file-viewer-body .hex-offset { color: var(--text-faint); }
+  #file-viewer-body .hex-bytes { color: #b5cea8; }
+  #file-viewer-body .hex-ascii { color: #9cdcfe; }
 
   /* Panel de salida, tipo terminal integrado */
   #output-panel {
@@ -269,31 +354,6 @@
     flex-direction: column;
   }
   #output-panel.collapsed #output-body { display: none; }
-
-  #generated-files {
-    flex: none;
-    display: none;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px 10px 0;
-  }
-  #generated-files.visible { display: flex; }
-
-  .file-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 3px 8px;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .file-chip:hover { border-color: var(--focus); }
-  .file-chip .file-size { color: var(--text-faint); }
 
   #terminal {
     flex: 1;
@@ -358,9 +418,21 @@
       <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>
     </header>
     <main>
+      <div id="file-tabs">
+        <button class="file-tab active" id="tab-main" data-tab="main">main.cpp</button>
+      </div>
       <div id="editor-wrap">
         <div id="editor"></div>
         <div id="boot-hint">Cargando editor…</div>
+        <div id="file-viewer">
+          <div id="file-viewer-toolbar">
+            <span class="fname" id="file-viewer-name"></span>
+            <span id="file-viewer-meta"></span>
+            <div class="spacer"></div>
+            <button id="file-viewer-download">⬇ Descargar</button>
+          </div>
+          <pre id="file-viewer-body"></pre>
+        </div>
       </div>
       <div id="output-panel">
         <div class="panel-header">
@@ -369,7 +441,6 @@
           <span id="output-status">lista para ejecutar</span>
         </div>
         <div id="output-body">
-          <div id="generated-files"></div>
           <div id="terminal"></div>
         </div>
       </div>

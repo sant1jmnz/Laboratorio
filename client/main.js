@@ -24,7 +24,13 @@ const outputPanel = document.getElementById('output-panel');
 const panelToggle = document.getElementById('panel-toggle');
 const outputStatus = document.getElementById('output-status');
 const terminalEl = document.getElementById('terminal');
-const generatedFilesEl = document.getElementById('generated-files');
+const fileTabsEl = document.getElementById('file-tabs');
+const tabMainBtn = document.getElementById('tab-main');
+const fileViewerEl = document.getElementById('file-viewer');
+const fileViewerNameEl = document.getElementById('file-viewer-name');
+const fileViewerMetaEl = document.getElementById('file-viewer-meta');
+const fileViewerBodyEl = document.getElementById('file-viewer-body');
+const fileViewerDownloadBtn = document.getElementById('file-viewer-download');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
@@ -168,10 +174,14 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function downloadBase64(name, base64) {
+function base64ToBytes(base64) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function downloadBytes(name, bytes) {
   const blob = new Blob([bytes], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -183,36 +193,135 @@ function downloadBase64(name, base64) {
   URL.revokeObjectURL(url);
 }
 
-function renderGeneratedFiles(files, socket) {
-  generatedFilesEl.innerHTML = '';
-  generatedFilesEl.classList.toggle('visible', files.length > 0);
-  for (const file of files) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'file-chip';
-    chip.title = `Descargar ${file.name}`;
-    chip.innerHTML = `⬇ ${file.name} <span class="file-size">${formatBytes(file.size)}</span>`;
-    chip.addEventListener('click', () => {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      chip.disabled = true;
-      const onMessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'file-content' && msg.name === file.name) {
-          socket.removeEventListener('message', onMessage);
-          chip.disabled = false;
-          if (msg.error) {
-            setOutputStatus(`no se pudo leer ${file.name}`, 'err');
-            return;
-          }
-          downloadBase64(file.name, msg.base64);
-        }
-      };
-      socket.addEventListener('message', onMessage);
-      socket.send(JSON.stringify({ type: 'get-file', name: file.name }));
-    });
-    generatedFilesEl.appendChild(chip);
+function decodeAsText(bytes) {
+  if (bytes.includes(0)) return null; // bytes nulos -> casi seguro binario
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
   }
 }
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+// El contenido (nombres de archivo y bytes) lo produce el programa que
+// corrio el usuario, asi que nunca se inserta como HTML sin escapar.
+function hexDump(bytes) {
+  const lines = [];
+  for (let offset = 0; offset < bytes.length; offset += 16) {
+    const chunk = bytes.subarray(offset, offset + 16);
+    const hex = Array.from(chunk, (b) => b.toString(16).padStart(2, '0'))
+      .join(' ')
+      .padEnd(47, ' ');
+    const ascii = escapeHtml(
+      Array.from(chunk, (b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('')
+    );
+    lines.push(
+      `<span class="hex-offset">${offset.toString(16).padStart(8, '0')}</span>  ` +
+        `<span class="hex-bytes">${hex}</span>  <span class="hex-ascii">${ascii}</span>`
+    );
+  }
+  return lines.join('\n');
+}
+
+// name -> { size, bytes, isText } de los archivos ya pedidos en esta ejecucion
+const fileCache = new Map();
+let activeTab = 'main';
+
+function showTab(name) {
+  activeTab = name;
+  fileViewerEl.classList.toggle('visible', name !== 'main');
+  for (const btn of fileTabsEl.querySelectorAll('.file-tab')) {
+    btn.classList.toggle('active', btn.dataset.tab === name);
+  }
+  if (name === 'main') return;
+
+  const cached = fileCache.get(name);
+  fileViewerNameEl.textContent = name;
+  if (!cached) {
+    fileViewerMetaEl.textContent = 'cargando…';
+    fileViewerBodyEl.textContent = '';
+    return;
+  }
+  fileViewerMetaEl.textContent = `${formatBytes(cached.size)}${cached.truncated ? ' (recortado)' : ''}${cached.isText ? '' : ' · binario'}`;
+  if (cached.isText) {
+    fileViewerBodyEl.textContent = cached.text;
+  } else {
+    fileViewerBodyEl.innerHTML = hexDump(cached.bytes) || '(archivo vacio)';
+  }
+}
+
+function closeFileTab(name, btn) {
+  btn.remove();
+  fileCache.delete(name);
+  if (activeTab === name) showTab('main');
+}
+
+function fetchFileContent(socket, name) {
+  if (fileCache.has(name) || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+  const onMessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type !== 'file-content' || msg.name !== name) return;
+    socket.removeEventListener('message', onMessage);
+    if (msg.error) {
+      fileCache.set(name, { size: 0, bytes: new Uint8Array(), isText: true, text: `(${msg.error})` });
+    } else {
+      const bytes = base64ToBytes(msg.base64);
+      const text = decodeAsText(bytes);
+      fileCache.set(name, { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text });
+    }
+    if (activeTab === name) showTab(name);
+  };
+  socket.addEventListener('message', onMessage);
+  socket.send(JSON.stringify({ type: 'get-file', name }));
+}
+
+function addFileTab(socket, name) {
+  if (fileTabsEl.querySelector(`.file-tab[data-tab="${CSS.escape(name)}"]`)) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'file-tab';
+  btn.dataset.tab = name;
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = name;
+  const closeSpan = document.createElement('span');
+  closeSpan.className = 'tab-close';
+  closeSpan.title = 'Cerrar';
+  closeSpan.textContent = '✕';
+  btn.append(nameSpan, closeSpan);
+  btn.addEventListener('click', (e) => {
+    if (e.target.closest('.tab-close')) {
+      closeFileTab(name, btn);
+      return;
+    }
+    showTab(name);
+    fetchFileContent(socket, name);
+  });
+  fileTabsEl.appendChild(btn);
+}
+
+function resetFileTabs() {
+  fileCache.clear();
+  for (const btn of fileTabsEl.querySelectorAll('.file-tab:not(#tab-main)')) btn.remove();
+  showTab('main');
+}
+
+function renderGeneratedFiles(files, socket) {
+  for (const file of files) addFileTab(socket, file.name);
+  if (files.length > 0 && activeTab === 'main') {
+    showTab(files[0].name);
+    fetchFileContent(socket, files[0].name);
+  }
+}
+
+tabMainBtn.addEventListener('click', () => showTab('main'));
+fileViewerDownloadBtn.addEventListener('click', () => {
+  const cached = fileCache.get(activeTab);
+  if (cached) downloadBytes(activeTab, cached.bytes);
+});
 
 function runCode() {
   if (!currentDoc) return;
@@ -222,7 +331,7 @@ function runCode() {
   term.reset();
   setPanelCollapsed(false);
   setOutputStatus('conectando…', 'busy');
-  renderGeneratedFiles([], null);
+  resetFileTabs();
   runBtn.disabled = true;
 
   const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
