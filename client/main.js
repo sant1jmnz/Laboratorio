@@ -125,23 +125,24 @@ loginCard.addEventListener('submit', async (e) => {
 // Colores del tema "Dark+" de VS Code
 const darkPlusTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#1e1e1e', color: '#d4d4d4', height: '100%' },
-    '.cm-content': { caretColor: '#aeafad', padding: '14px 0' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#aeafad' },
+    '&': { backgroundColor: '#1c1c1e', color: '#d4d4d4', height: '100%' },
+    '.cm-content': { caretColor: '#0a84ff', padding: '14px 0' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#0a84ff', borderLeftWidth: '2px' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: '#264f78',
+      backgroundColor: 'rgba(10, 132, 255, 0.32)',
     },
     '.cm-gutters': {
-      backgroundColor: '#1e1e1e',
-      color: '#858585',
+      backgroundColor: '#1c1c1e',
+      color: '#6a6a70',
       border: 'none',
-      borderRight: '1px solid #2b2b2b',
+      paddingRight: '4px',
     },
-    '.cm-activeLine': { backgroundColor: '#2a2d2e' },
-    '.cm-activeLineGutter': { backgroundColor: '#2a2d2e', color: '#c6c6c6' },
+    '.cm-activeLine': { backgroundColor: 'rgba(255, 255, 255, 0.045)' },
+    '.cm-activeLineGutter': { backgroundColor: 'transparent', color: '#f2f2f7' },
     '.cm-matchingBracket, .cm-nonmatchingBracket': {
-      backgroundColor: '#3a3d41',
-      outline: '1px solid #5a5d63',
+      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+      outline: '1px solid rgba(255, 255, 255, 0.25)',
+      borderRadius: '3px',
     },
     '.cm-scroller': { overflow: 'auto' },
   },
@@ -174,20 +175,22 @@ const term = new Terminal({
   convertEol: true,
   fontFamily: "'Cascadia Mono', ui-monospace, Consolas, Menlo, monospace",
   fontSize: 13,
+  fontWeight: '400',
+  lineHeight: 1.35,
+  cursorBlink: true,
   theme: {
-    background: '#1e1e1e',
-    foreground: '#d4d4d4',
-    cursor: '#aeafad',
-    selectionBackground: '#264f78',
+    background: '#1c1c1e',
+    foreground: '#e5e5ea',
+    cursor: '#0a84ff',
+    selectionBackground: 'rgba(10, 132, 255, 0.32)',
+    red: '#ff453a',
+    green: '#30d158',
+    yellow: '#ffd60a',
+    blue: '#0a84ff',
+    magenta: '#bf5af2',
+    cyan: '#64d2ff',
   },
 });
-const fitAddon = new FitAddon();
-term.loadAddon(fitAddon);
-term.open(terminalEl);
-fitAddon.fit();
-term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el archivo activo.');
-new ResizeObserver(() => fitAddon.fit()).observe(terminalEl);
-
 let currentView = null;
 let currentProvider = null;
 let currentDoc = null;
@@ -195,6 +198,27 @@ let currentRoom = null;
 let filesArray = null;
 let activeFile = null;
 let runSocket = null;
+
+const fitAddon = new FitAddon();
+term.loadAddon(fitAddon);
+term.open(terminalEl);
+
+// fit() mide en celdas, asi que hasta que la fuente monoespaciada no esta
+// cargada calcula mal el ancho y la terminal queda desbordada. Reajustamos
+// cuando las fuentes terminan de cargar y ante cualquier cambio de tamaño.
+function fitTerminal() {
+  try { fitAddon.fit(); } catch { /* el panel puede estar colapsado */ }
+  // El proceso del otro lado necesita saber el tamaño real de la terminal
+  // para que el wrapping de su salida coincida con lo que se ve.
+  if (runSocket?.readyState === WebSocket.OPEN) {
+    runSocket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+  }
+}
+fitTerminal();
+document.fonts?.ready.then(fitTerminal);
+term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el archivo activo.');
+new ResizeObserver(fitTerminal).observe(terminalEl);
+window.addEventListener('resize', fitTerminal);
 
 // Salas sin friccion: si entras sin ?room, se genera una nueva y se
 // escribe en la URL con replaceState (sin ensuciar el historial). Asi
@@ -276,8 +300,8 @@ async function copyShareLink() {
 }
 
 function setPanelCollapsed(collapsed) {
+  // El chevron gira por CSS (#panel-toggle), no cambiando el caracter.
   outputPanel.classList.toggle('collapsed', collapsed);
-  panelToggle.textContent = collapsed ? '▸' : '▾';
 }
 
 function setOutputStatus(text, className) {
