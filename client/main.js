@@ -1,6 +1,6 @@
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history as cmHistory, historyKeymap } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
 import { cpp } from '@codemirror/lang-cpp';
 import * as Y from 'yjs';
@@ -16,8 +16,11 @@ const USER_COLORS = ['#30bced', '#6eeb83', '#ffbc42', '#ecd444', '#ee6352', '#9a
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
 const userName = 'Usuario-' + Math.floor(Math.random() * 1000);
 
+const DEFAULT_CODE = '#include <iostream>\n\nint main() {\n    std::cout << "Hola mundo" << std::endl;\n    return 0;\n}\n';
+
 let currentView = null;
 let currentProvider = null;
+let currentDoc = null;
 
 function getRoomFromUrl() {
   const params = new URLSearchParams(location.search);
@@ -27,18 +30,22 @@ function getRoomFromUrl() {
 function setRoomInUrl(room) {
   const url = new URL(location.href);
   url.searchParams.set('room', room);
-  history.pushState({}, '', url);
+  window.history.pushState({}, '', url);
 }
 
 function joinRoom(room) {
   if (currentProvider) {
     currentProvider.destroy();
   }
+  if (currentDoc) {
+    currentDoc.destroy();
+  }
   if (currentView) {
     currentView.destroy();
   }
 
   const ydoc = new Y.Doc();
+  currentDoc = ydoc;
   const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
   const provider = new WebsocketProvider(`${wsProtocol}://${location.host}`, `docs/${room}`, ydoc);
   currentProvider = provider;
@@ -51,9 +58,15 @@ function joinRoom(room) {
   });
 
   const ytext = ydoc.getText('codemirror');
-  if (ytext.length === 0) {
-    ytext.insert(0, '#include <iostream>\n\nint main() {\n    std::cout << "Hola mundo" << std::endl;\n    return 0;\n}\n');
-  }
+
+  // Solo sembramos el contenido por defecto una vez que confirmamos con el
+  // servidor que el documento esta vacio, para no pisar/duplicar contenido
+  // de otros clientes que se conecten al mismo tiempo.
+  provider.once('sync', (isSynced) => {
+    if (isSynced && ytext.length === 0) {
+      ytext.insert(0, DEFAULT_CODE);
+    }
+  });
 
   const state = EditorState.create({
     doc: ytext.toString(),
@@ -61,7 +74,7 @@ function joinRoom(room) {
       basicSetup,
       cpp(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      history(),
+      cmHistory(),
       yCollab(ytext, provider.awareness),
     ],
   });

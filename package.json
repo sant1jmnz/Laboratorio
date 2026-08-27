@@ -5,13 +5,24 @@
   "description": "Editor de codigo colaborativo en tiempo real (tipo Google Docs para codigo)",
   "type": "module",
   "scripts": {
+    "build": "esbuild client/main.js --bundle --format=esm --outfile=public/bundle.js",
+    "prestart": "npm run build",
     "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "npm run build && node server/index.js"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-cpp": "^6.0.3",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.9",
+    "codemirror": "^6.0.2",
     "express": "^4.19.2",
     "ws": "^8.18.0",
+    "y-codemirror.next": "^0.3.6",
     "y-websocket": "^2.1.0",
     "yjs": "^13.6.19"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
