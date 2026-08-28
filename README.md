@@ -51,9 +51,21 @@ Para compartir con otra persona en otra red, hay que exponer el puerto 3000 (por
 
 Este repo trae un `Dockerfile` y un `render.yaml` para desplegar en [Render](https://render.com) con un click (Blueprint). El servicio corre en Docker porque necesita `g++` instalado, algo que el runtime Node nativo de Render no trae.
 
+## Aislamiento del código que se ejecuta
+
+El servidor corre como root dentro del contenedor, pero **los programas de los usuarios nunca**: se ejecutan como un usuario del sistema sin privilegios (`runner`, uid/gid 999, configurable con `RUNNER_UID`/`RUNNER_GID`).
+
+Esto no es opcional si vas a publicar el editor. Sin eso, cualquiera que pueda ejecutar código podría leer `/proc/<pid del servidor>/environ` y llevarse el `GITHUB_TOKEN` y la `APP_PASSWORD` — lo verifiqué, funcionaba. Con el cambio, ese mismo programa recibe permiso denegado.
+
+Además: a los programas se les pasa un entorno acotado a mano (`PATH`, `HOME`, `LANG`), nunca el del servidor, y el código del servidor queda ilegible para `runner` (`chmod go-rwx /app`).
+
+Lo que un programa **sí** puede hacer todavía: usar la red y consumir CPU/memoria hasta los límites de tiempo y concurrencia que aplica el servidor. Para un uso entre gente conocida está bien; para abrirlo a internet sin clave, convendría además un contenedor por ejecución.
+
 ## Clave de acceso
 
 Configurando la variable de entorno `APP_PASSWORD` (Render: **Environment** → **Add Environment Variable**), el editor pide una clave compartida antes de dejar entrar a nadie — sin ella, cualquiera con el link puede editar. Es una única contraseña para todos los que quieras que editen, no cuentas individuales.
+
+La elegís vos (no se genera sola: tendrías que ir al dashboard a leerla cada vez). Que sea larga y no reutilizada de otro lado; el editor deja ejecutar código en el servidor, así que la clave es lo que separa eso de internet.
 
 El navegador guarda un token de sesión (30 días) en `localStorage` después de loguearse una vez, así que no hay que escribir la clave en cada visita. Sin `APP_PASSWORD` configurada, el editor queda abierto como antes (sin pantalla de login).
 
@@ -74,6 +86,7 @@ Nota: la persistencia en disco (y-leveldb) ya evita que se pierda algo por dejar
 ## Estructura
 
 - `server/index.js`: servidor Express + WebSocket. Rutea `/run-ws` a la terminal interactiva, `/debug-ws` al depurador, y todo lo demás (`/docs/<sala>`) a la sincronización Yjs; gatea ambos con la clave de acceso si está configurada.
+- `server/sandbox.js`: baja privilegios de los procesos de usuario y les cede el directorio y la terminal.
 - `server/auth.js`: clave compartida + tokens de sesión firmados (HMAC), sin base de datos de usuarios.
 - `server/languages.js`: registro de lenguajes (extensiones, comando de compilación y de ejecución de cada uno).
 - `server/build.js`: escribe el fuente en un directorio temporal aislado y lo compila si hace falta (sin usar shell).

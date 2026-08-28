@@ -2,6 +2,7 @@ import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import * as pty from 'node-pty';
 import { prepareProgram } from './build.js';
+import { runnerSpawnOptions } from './sandbox.js';
 
 const MAX_CONCURRENT = 6;
 const IDLE_TIMEOUT_MS = 3 * 60_000; // sin entrada/salida por 3 min -> se corta
@@ -156,7 +157,10 @@ export function handleInteractiveConnection(ws) {
         cols,
         rows,
         cwd: dir,
+        // env acotado a proposito: el programa del usuario no debe ver los
+        // secretos del servidor (GITHUB_TOKEN, APP_PASSWORD, etc).
         env: { PATH: process.env.PATH ?? '', HOME: dir, LANG: 'C.UTF-8' },
+        ...runnerSpawnOptions(),
       });
 
       send(ws, { type: 'status', status: 'running' });

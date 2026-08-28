@@ -4,6 +4,7 @@ import path from 'node:path';
 import * as pty from 'node-pty';
 import { prepareProgram } from './build.js';
 import { parseMiLine } from './mi-parser.js';
+import { handOverTty, runnerSpawnOptions } from './sandbox.js';
 
 const MAX_CONCURRENT = 3;
 const IDLE_TIMEOUT_MS = 10 * 60_000;
@@ -106,6 +107,52 @@ export function handleDebugConnection(ws) {
     });
   }
 
+  /**
+   * "Solo mi codigo", como VS Code: si un step termina dentro de la libreria
+   * estandar (no en el archivo del usuario), no tiene sentido mostrar las
+   * tripas de libc con sus variables internas. Salimos de esos frames hasta
+   * volver al codigo del usuario. Si no se puede, dejamos correr.
+   */
+  const MAX_AUTO_FINISH = 8;
+  async function skipLibraryFrames(stopData) {
+    const isUserFrame = (f) => f?.file && path.basename(f.file) === sourceName;
+    if (isUserFrame(stopData?.frame)) return stopData;
+
+    for (let i = 0; i < MAX_AUTO_FINISH; i++) {
+      const framesRes = await mi('-stack-list-frames');
+      const stack = framesRes.data?.stack ?? [];
+      // Si el usuario ya no esta en la pila (main termino), seguimos de largo.
+      if (!stack.some(isUserFrame)) {
+        mi('-exec-continue');
+        return null;
+      }
+      const res = await mi('-exec-finish');
+      if (res.class === 'error') {
+        mi('-exec-continue');
+        return null;
+      }
+      const stopped = await waitForStop();
+      if (!stopped || isUserFrame(stopped.frame)) return stopped;
+    }
+    return null;
+  }
+
+  // Espera el proximo *stopped, para poder encadenar pasos automaticos.
+  let stopWaiter = null;
+  function waitForStop() {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        stopWaiter = null;
+        resolve(null);
+      }, CMD_TIMEOUT_MS);
+      stopWaiter = (data) => {
+        clearTimeout(timer);
+        stopWaiter = null;
+        resolve(data);
+      };
+    });
+  }
+
   /** Junta el estado visible cuando el programa queda pausado y lo manda. */
   async function reportPaused(stopData) {
     const [framesRes, varsRes] = await Promise.all([
@@ -165,7 +212,16 @@ export function handleDebugConnection(ws) {
           return;
         }
         bumpIdle();
-        reportPaused(rec.data);
+
+        // Si hay un paso automatico esperando este stop, es suyo.
+        if (stopWaiter) {
+          stopWaiter(rec.data);
+          return;
+        }
+
+        skipLibraryFrames(rec.data).then((stop) => {
+          if (stop) reportPaused(stop);
+        });
       }
     }
   }
@@ -220,15 +276,22 @@ export function handleDebugConnection(ws) {
         rows: Number.isInteger(msg.rows) ? msg.rows : 24,
         cwd: dir,
         env: { PATH: process.env.PATH ?? '', HOME: dir, LANG: 'C.UTF-8' },
+        ...runnerSpawnOptions(),
       });
       inferiorTty.onData((data) => {
         bumpIdle();
         send(ws, { type: 'data', data });
       });
+      // GDB abre esta terminal por nombre, asi que necesita permisos sobre ella.
+      await handOverTty(inferiorTty._pty);
 
+      // GDB tambien baja privilegios: puede depurar igual porque el
+      // programa es hijo suyo, y asi ni el debugger ni el programa ven las
+      // variables de entorno del servidor.
       gdb = spawn('gdb', ['--interpreter=mi3', '--nx', prepared.binaryPath], {
         cwd: dir,
         env: { PATH: process.env.PATH ?? '', HOME: dir, LANG: 'C.UTF-8', TERM: 'dumb' },
+        ...runnerSpawnOptions(),
       });
       gdb.stdout.on('data', onGdbOutput);
       gdb.on('error', () => {

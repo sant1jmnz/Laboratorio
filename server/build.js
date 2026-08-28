@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_LANGUAGE, LANGUAGES, detectLanguage } from './languages.js';
+import { handOverDir, makeExecutable } from './sandbox.js';
 
 const COMPILE_TIMEOUT_MS = 20_000;
 const MAX_OUTPUT_BYTES = 200_000;
@@ -76,6 +77,11 @@ export async function prepareProgram({ code, fileName, forDebug = false }) {
     }
     warnings = cleanPaths(compile.stderr || '');
   }
+
+  // Compilamos como root (para que g++ vea sus headers) pero el programa
+  // corre como usuario sin privilegios, asi que le cedemos el directorio.
+  await makeExecutable(binaryPath);
+  await handOverDir(dir);
 
   const [runCmd, runArgs] = lang.run(sourcePath, binaryPath, dir);
   return {
