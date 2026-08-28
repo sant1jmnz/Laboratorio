@@ -285,13 +285,43 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-async function start() {
-  if (dbEnabled()) {
+/**
+ * Prepara la base reintentando con espera creciente.
+ *
+ * Los Postgres gestionados gratuitos (Supabase, Neon) pausan el proyecto
+ * tras dias de inactividad y la primera conexion falla mientras despierta.
+ * Sin reintentos, ese hipo hace fallar el deploy entero y hay que
+ * redesplegar a mano.
+ */
+async function connectWithRetry(attempts = 6) {
+  for (let i = 1; i <= attempts; i++) {
     try {
       await initSchema();
       console.log('Base de datos lista.');
+      return true;
     } catch (err) {
-      console.error('No se pudo preparar la base de datos:', err.message);
+      const last = i === attempts;
+      const waitMs = Math.min(1000 * 2 ** (i - 1), 15_000);
+      console.error(
+        `No se pudo conectar a la base (intento ${i}/${attempts}): ${err.message}` +
+          (last ? '' : ` — reintento en ${Math.round(waitMs / 1000)}s`)
+      );
+      if (last) return false;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  return false;
+}
+
+async function start() {
+  if (dbEnabled()) {
+    const ready = await connectWithRetry();
+    if (!ready) {
+      console.error(
+        'La base sigue sin responder. Revisá DATABASE_URL: en Supabase tiene que ser la cadena ' +
+          'del "Session pooler" (no la "Direct connection", que es solo IPv6), y los caracteres ' +
+          'especiales de la contraseña van codificados (/ es %2F, @ es %40).'
+      );
       process.exit(1);
     }
   } else {
