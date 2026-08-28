@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
 import { handleInteractiveConnection } from './interactive-run.js';
+import { handleDebugConnection } from './debug-session.js';
 import { isConfigured, loadWorkspace, saveWorkspace } from './github-save.js';
 import { authRequired, checkPassword, issueToken, verifyToken } from './auth.js';
 import { languageSummaries } from './languages.js';
@@ -99,6 +100,7 @@ const server = http.createServer(app);
 // (/docs/<sala>) es la sincronizacion colaborativa de Yjs.
 const collabWss = new WebSocketServer({ noServer: true });
 const runWss = new WebSocketServer({ noServer: true });
+const debugWss = new WebSocketServer({ noServer: true });
 
 collabWss.on('connection', (ws, req) => {
   setupWSConnection(ws, req);
@@ -106,6 +108,10 @@ collabWss.on('connection', (ws, req) => {
 
 runWss.on('connection', (ws) => {
   handleInteractiveConnection(ws);
+});
+
+debugWss.on('connection', (ws) => {
+  handleDebugConnection(ws);
 });
 
 server.on('upgrade', (req, socket, head) => {
@@ -117,7 +123,8 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
-  const wss = pathname === '/run-ws' ? runWss : collabWss;
+  const wss =
+    pathname === '/run-ws' ? runWss : pathname === '/debug-ws' ? debugWss : collabWss;
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit('connection', ws, req);
   });

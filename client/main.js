@@ -13,6 +13,7 @@ import { WebsocketProvider } from 'y-websocket';
 import { yCollab } from 'y-codemirror.next';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { applyBreakpoints, applyPausedLine, breakpointGutter } from './debug-ui.js';
 
 const loginOverlay = document.getElementById('login-overlay');
 const loginCard = document.getElementById('login-card');
@@ -46,6 +47,17 @@ const newFileBtn = document.getElementById('new-file-btn');
 const newFileRow = document.getElementById('new-file-row');
 const newFileInput = document.getElementById('new-file-input');
 const langIndicatorEl = document.getElementById('lang-indicator');
+const debugBtn = document.getElementById('debug');
+const debugToolbar = document.getElementById('debug-toolbar');
+const debugStateEl = document.getElementById('debug-state');
+const debugPanel = document.getElementById('debug-panel');
+const dbgVariablesEl = document.getElementById('dbg-variables');
+const dbgFramesEl = document.getElementById('dbg-frames');
+const dbgContinueBtn = document.getElementById('dbg-continue');
+const dbgNextBtn = document.getElementById('dbg-next');
+const dbgStepBtn = document.getElementById('dbg-step');
+const dbgFinishBtn = document.getElementById('dbg-finish');
+const dbgStopBtn = document.getElementById('dbg-stop');
 
 const USER_COLORS = ['#4fa6ff', '#7ee787', '#ffbc42', '#f2cc60', '#ff7b72', '#9ac2c9', '#d2a8ff', '#39c5cf'];
 const userColor = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
@@ -556,6 +568,226 @@ function runCode() {
 }
 
 // ---------------------------------------------------------------------
+// Depurador (GDB por WebSocket)
+// ---------------------------------------------------------------------
+let debugSocket = null;
+// Breakpoints por archivo, para que sobrevivan al cambiar de pestaña.
+const breakpointsByFile = new Map();
+
+function onBreakpointToggled(line, active) {
+  if (!activeFile) return;
+  const set = breakpointsByFile.get(activeFile) ?? new Set();
+  if (active) set.add(line);
+  else set.delete(line);
+  breakpointsByFile.set(activeFile, set);
+
+  // Si hay una sesion viva, el cambio se aplica en caliente.
+  if (debugSocket?.readyState === WebSocket.OPEN) {
+    debugSocket.send(JSON.stringify({ type: active ? 'set-breakpoint' : 'remove-breakpoint', line }));
+  }
+}
+
+function setDebugUiActive(active) {
+  debugToolbar.classList.toggle('visible', active);
+  debugPanel.classList.toggle('visible', active);
+  debugBtn.classList.toggle('active', active);
+  debugBtn.textContent = active ? 'Depurando' : 'Depurar';
+  runBtn.disabled = active;
+  if (!active) {
+    applyPausedLine(currentView, null);
+    dbgVariablesEl.innerHTML = '';
+    dbgFramesEl.innerHTML = '';
+  }
+}
+
+function setDebugControlsEnabled(enabled) {
+  for (const b of [dbgContinueBtn, dbgNextBtn, dbgStepBtn, dbgFinishBtn]) b.disabled = !enabled;
+}
+
+function renderDebugState(paused) {
+  dbgVariablesEl.innerHTML = '';
+  dbgFramesEl.innerHTML = '';
+
+  if (paused.variables.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'dbg-empty';
+    empty.textContent = 'sin variables en este ambito';
+    dbgVariablesEl.appendChild(empty);
+  }
+  for (const v of paused.variables) {
+    const row = document.createElement('div');
+    row.className = 'dbg-var';
+    const name = document.createElement('span');
+    name.className = 'v-name' + (v.isArg ? ' arg' : '');
+    name.textContent = v.name;
+    const value = document.createElement('span');
+    value.className = 'v-value';
+    value.textContent = v.value;
+    value.title = `${v.name} = ${v.value}`;
+    row.append(name, value);
+    dbgVariablesEl.appendChild(row);
+  }
+
+  for (const f of paused.frames) {
+    const row = document.createElement('div');
+    row.className = 'dbg-frame' + (f.level === 0 ? ' top' : '');
+    const fn = document.createElement('span');
+    fn.className = 'f-func';
+    fn.textContent = f.func + '()';
+    const ln = document.createElement('span');
+    ln.className = 'f-line';
+    ln.textContent = f.line ? `:${f.line}` : '';
+    row.append(fn, ln);
+    dbgFramesEl.appendChild(row);
+  }
+}
+
+function stopDebugging() {
+  if (debugSocket?.readyState === WebSocket.OPEN) {
+    debugSocket.send(JSON.stringify({ type: 'stop' }));
+  }
+  debugSocket?.close();
+  debugSocket = null;
+  setDebugUiActive(false);
+}
+
+function startDebugging() {
+  if (!currentDoc || !activeFile) return;
+  if (debugSocket) {
+    stopDebugging();
+    return;
+  }
+
+  const code = fileYText(activeFile).toString();
+  const breakpoints = [...(breakpointsByFile.get(activeFile) ?? [])];
+
+  term.reset();
+  setPanelCollapsed(false);
+  setOutputStatus('iniciando depuracion…', 'busy');
+  resetOutputTabs();
+  setDebugUiActive(true);
+  setDebugControlsEnabled(false);
+  debugStateEl.textContent = 'Compilando…';
+  debugStateEl.className = 'dbg-state running';
+
+  const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const qs = new URLSearchParams(wsAuthParams()).toString();
+  const socket = new WebSocket(`${wsProtocol}://${location.host}/debug-ws${qs ? '?' + qs : ''}`);
+  debugSocket = socket;
+
+  const inputDisposable = term.onData((data) => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'input', data }));
+    }
+  });
+
+  socket.addEventListener('open', () => {
+    socket.send(
+      JSON.stringify({
+        type: 'start',
+        code,
+        fileName: activeFile,
+        breakpoints,
+        cols: term.cols,
+        rows: term.rows,
+      })
+    );
+  });
+
+  socket.addEventListener('message', (event) => {
+    const msg = JSON.parse(event.data);
+    switch (msg.type) {
+      case 'status':
+        if (msg.status === 'queued') { setOutputStatus('en cola…', 'busy'); debugStateEl.textContent = 'En cola…'; }
+        else if (msg.status === 'compiling') { setOutputStatus('compilando…', 'busy'); debugStateEl.textContent = 'Compilando…'; }
+        else if (msg.status === 'started') setOutputStatus('depurando', 'busy');
+        else if (msg.status === 'running') {
+          debugStateEl.textContent = 'Ejecutando…';
+          debugStateEl.className = 'dbg-state running';
+          setDebugControlsEnabled(false);
+          applyPausedLine(currentView, null);
+        }
+        break;
+
+      case 'compile-warnings':
+        term.write(msg.output.replace(/\n/g, '\r\n'));
+        break;
+
+      case 'compile-error':
+        setOutputStatus('fallo la compilacion', 'err');
+        term.write('\x1b[31mError de compilacion:\x1b[0m\r\n');
+        term.write((msg.output || msg.message).replace(/\n/g, '\r\n'));
+        setDebugUiActive(false);
+        break;
+
+      case 'debug-error':
+        setOutputStatus('error del debugger', 'err');
+        term.write(`\r\n\x1b[31m${msg.message}\x1b[0m`);
+        setDebugUiActive(false);
+        break;
+
+      case 'data':
+        // GDB avisa por la tty del programa que no pudo tomar el control de
+        // la terminal; es inofensivo y solo ensucia la salida.
+        term.write(String(msg.data).replace(/&"warning: GDB: Failed to set controlling terminal[^"]*"\r?\n/g, ''));
+        break;
+
+      case 'paused':
+        debugStateEl.textContent = `Pausado · linea ${msg.line ?? '?'}`;
+        debugStateEl.className = 'dbg-state';
+        setOutputStatus('pausado', 'warn');
+        setDebugControlsEnabled(true);
+        applyPausedLine(currentView, msg.line);
+        renderDebugState(msg);
+        break;
+
+      case 'breakpoints':
+        if (activeFile) breakpointsByFile.set(activeFile, new Set(msg.lines));
+        applyBreakpoints(currentView, msg.lines);
+        break;
+
+      case 'exit': {
+        const reason =
+          msg.reason === 'idle' ? '[sesion cerrada por inactividad]'
+          : msg.reason === 'timeout' ? '[tiempo maximo de depuracion alcanzado]'
+          : msg.reason === 'detenido' ? '[depuracion detenida]'
+          : `[programa terminado, codigo ${msg.code}]`;
+        term.write(`\r\n\x1b[2m${reason}\x1b[0m`);
+        setOutputStatus(msg.code === 0 ? 'terminado' : 'terminado con error', msg.code === 0 ? 'ok' : 'err');
+        setDebugUiActive(false);
+        break;
+      }
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    inputDisposable.dispose();
+    if (debugSocket === socket) {
+      debugSocket = null;
+      setDebugUiActive(false);
+    }
+  });
+  socket.addEventListener('error', () => {
+    setOutputStatus('error de conexion', 'err');
+    term.write('\r\n\x1b[31m[no se pudo conectar con el debugger]\x1b[0m');
+  });
+}
+
+function debugCommand(type) {
+  if (debugSocket?.readyState === WebSocket.OPEN) {
+    setDebugControlsEnabled(false);
+    debugSocket.send(JSON.stringify({ type }));
+  }
+}
+
+debugBtn.addEventListener('click', startDebugging);
+dbgContinueBtn.addEventListener('click', () => debugCommand('continue'));
+dbgNextBtn.addEventListener('click', () => debugCommand('next'));
+dbgStepBtn.addEventListener('click', () => debugCommand('step'));
+dbgFinishBtn.addEventListener('click', () => debugCommand('finish'));
+dbgStopBtn.addEventListener('click', stopDebugging);
+
+// ---------------------------------------------------------------------
 // Workspace multi-archivo (explorador tipo VS Code, por sala)
 // ---------------------------------------------------------------------
 function fileYText(name) {
@@ -593,6 +825,18 @@ function languageLabelFor(name) {
   return ext ? ext.slice(1).toUpperCase() : 'Texto';
 }
 
+// El debugger es GDB, asi que solo aplica a los lenguajes compilados
+// nativos (C/C++). Para el resto el boton se deshabilita explicando por que.
+function updateDebugAvailability(name) {
+  const ext = extOf(name);
+  const lang = languageCatalog.find((l) => l.extensions.includes(ext));
+  const canDebug = lang ? lang.debuggable : ['.c', '.cpp', '.cc', '.cxx'].includes(ext);
+  debugBtn.disabled = !canDebug;
+  debugBtn.title = canDebug
+    ? 'Depurar con breakpoints (F5)'
+    : `El debugger todavia solo soporta C y C++${lang ? ` (este archivo es ${lang.name})` : ''}.`;
+}
+
 function fileDotClass(name) {
   const ext = extOf(name);
   if (['.h', '.hpp', '.hh'].includes(ext)) return 'header';
@@ -605,6 +849,9 @@ function createEditorForFile(ytext, fileName) {
   const state = EditorState.create({
     doc: ytext.toString(),
     extensions: [
+      // Antes de basicSetup para que la canaleta de breakpoints quede a la
+      // izquierda de los numeros de linea, como en VS Code.
+      breakpointGutter(onBreakpointToggled),
       basicSetup,
       darkPlusTheme,
       syntaxHighlighting(darkPlusHighlight),
@@ -626,6 +873,8 @@ function switchToFile(name) {
   activeFile = name;
   createEditorForFile(fileYText(name), name);
   langIndicatorEl.textContent = languageLabelFor(name);
+  updateDebugAvailability(name);
+  applyBreakpoints(currentView, [...(breakpointsByFile.get(name) ?? [])]);
   renderFileList();
 }
 
@@ -728,6 +977,7 @@ function renameFile(oldName, rawNewName) {
     activeFile = newName;
     createEditorForFile(newText, newName);
     langIndicatorEl.textContent = languageLabelFor(newName);
+    updateDebugAvailability(newName);
   }
   renderFileList();
 }
@@ -827,7 +1077,10 @@ function startApp() {
     .then((r) => r.json())
     .then(({ languages }) => {
       languageCatalog = languages || [];
-      if (activeFile) langIndicatorEl.textContent = languageLabelFor(activeFile);
+      if (activeFile) {
+        langIndicatorEl.textContent = languageLabelFor(activeFile);
+        updateDebugAvailability(activeFile);
+      }
     })
     .catch(() => {});
 
@@ -934,11 +1187,23 @@ panelToggle.addEventListener('click', () => {
   setPanelCollapsed(!outputPanel.classList.contains('collapsed'));
 });
 
+// Atajos globales, con los mismos bindings que VS Code para depurar.
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     runCode();
+    return;
   }
+  if (e.key === 'F5') {
+    e.preventDefault();
+    if (!debugSocket) startDebugging();
+    else debugCommand('continue');
+    return;
+  }
+  if (!debugSocket) return;
+  if (e.key === 'F8') { e.preventDefault(); debugCommand('continue'); }
+  else if (e.key === 'F10') { e.preventDefault(); debugCommand('next'); }
+  else if (e.key === 'F11') { e.preventDefault(); debugCommand(e.shiftKey ? 'finish' : 'step'); }
 });
 
 boot();

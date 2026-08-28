@@ -616,6 +616,114 @@
   }
   #login-overlay.visible { display: flex; }
 
+  /* ---- Depurador ---- */
+
+  #debug { color: var(--warn); }
+  #debug.active { background: var(--warn); color: #3a2f00; font-weight: 600; }
+
+  /* Barra de controles: aparece deslizandose solo durante la depuracion */
+  #debug-toolbar {
+    flex: none;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    background: rgba(255, 214, 10, 0.1);
+    border-bottom: 1px solid rgba(255, 214, 10, 0.22);
+    animation: bar-in 0.3s var(--ease);
+  }
+  #debug-toolbar.visible { display: flex; }
+  @keyframes bar-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: none; }
+  }
+  #debug-toolbar button { font-size: 12px; padding: 5px 10px; background: rgba(255, 255, 255, 0.09); }
+  #debug-toolbar button:hover { background: rgba(255, 255, 255, 0.17); }
+  #debug-toolbar #dbg-stop { color: var(--err); }
+  .dbg-state {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--warn);
+    padding-right: 4px;
+    min-width: 92px;
+  }
+  .dbg-state.running { color: var(--text-dim); }
+
+  /* Panel de variables y pila, abajo del explorador */
+  #debug-panel {
+    display: none;
+    flex: 1.4;
+    min-height: 0;
+    flex-direction: column;
+    border-top: 1px solid var(--panel-border);
+    margin-top: 6px;
+    overflow-y: auto;
+  }
+  #debug-panel.visible { display: flex; }
+
+  .dbg-section-title {
+    flex: none;
+    padding: 9px 12px 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-dim);
+  }
+  .dbg-list { flex: none; padding: 0 8px 4px; }
+  .dbg-empty { padding: 2px 10px 6px; font-size: 11.5px; color: var(--text-faint); font-style: italic; }
+
+  .dbg-var, .dbg-frame {
+    display: flex;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .dbg-var:hover, .dbg-frame:hover { background: rgba(255, 255, 255, 0.06); }
+  .dbg-var .v-name { color: #9cdcfe; flex: none; }
+  .dbg-var .v-name.arg::after { content: ' (arg)'; color: var(--text-faint); font-size: 10px; }
+  .dbg-var .v-value {
+    color: #b5cea8;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+  }
+  .dbg-frame { color: var(--text-dim); cursor: default; }
+  .dbg-frame.top { color: var(--text); }
+  .dbg-frame .f-func { color: #dcdcaa; }
+  .dbg-frame .f-line { color: var(--text-faint); margin-left: auto; }
+
+  /* Canaleta de breakpoints y linea pausada, dentro del editor */
+  .cm-breakpoint-gutter {
+    width: 18px;
+    cursor: pointer;
+  }
+  .cm-breakpoint-gutter:hover { background: rgba(255, 255, 255, 0.04); }
+  .cm-breakpoint-dot {
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin: 4px auto 0;
+    border-radius: 50%;
+    transition: background 0.16s var(--ease);
+  }
+  .cm-breakpoint-dot.on {
+    background: var(--err);
+    box-shadow: 0 0 5px rgba(255, 69, 58, 0.6);
+  }
+  /* Fantasma al pasar el mouse, igual que VS Code */
+  .cm-breakpoint-gutter:hover .cm-breakpoint-dot.off { background: rgba(255, 69, 58, 0.32); }
+  .cm-paused-line {
+    background: rgba(255, 214, 10, 0.16) !important;
+    box-shadow: inset 3px 0 0 var(--warn);
+  }
+
   /* Tarjeta de acceso al estilo de una hoja modal de iOS */
   #login-card {
     width: 320px;
@@ -694,8 +802,18 @@
       <button id="save" title="Guardar el codigo en GitHub">Guardar</button>
       <div class="spacer"></div>
       <div id="peers"></div>
+      <button id="debug" title="Depurar con breakpoints (F5)">Depurar</button>
       <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>
     </header>
+    <div id="debug-toolbar">
+      <span class="dbg-state" id="debug-state">Pausado</span>
+      <button id="dbg-continue" title="Continuar (F8)">▶ Continuar</button>
+      <button id="dbg-next" title="Ejecutar la linea y seguir (F10)">↷ Siguiente</button>
+      <button id="dbg-step" title="Entrar a la funcion (F11)">↓ Entrar</button>
+      <button id="dbg-finish" title="Salir de la funcion (Shift+F11)">↑ Salir</button>
+      <div class="spacer"></div>
+      <button id="dbg-stop" title="Terminar la sesion de depuracion">■ Detener</button>
+    </div>
     <main>
       <div id="sidebar">
         <div id="sidebar-header">
@@ -706,6 +824,12 @@
         <div id="new-file-row">
           <span class="file-dot"></span>
           <input id="new-file-input" type="text" placeholder="nombre.cpp" spellcheck="false" autocomplete="off" />
+        </div>
+        <div id="debug-panel">
+          <div class="dbg-section-title">Variables</div>
+          <div id="dbg-variables" class="dbg-list"></div>
+          <div class="dbg-section-title">Pila de llamadas</div>
+          <div id="dbg-frames" class="dbg-list"></div>
         </div>
       </div>
       <div id="content-column">

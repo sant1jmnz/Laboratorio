@@ -6,13 +6,24 @@ Editor de código multi-lenguaje tipo VS Code donde varias personas editan a la 
 
 | Lenguaje | Extensiones | Cómo corre |
 |---|---|---|
-| C++ | `.cpp` `.cc` `.cxx` | `g++ -std=c++20` |
-| C | `.c` | `gcc -std=c17` |
+| C++ | `.cpp` `.cc` `.cxx` | `g++ -std=c++20` · **con debugger** |
+| C | `.c` | `gcc -std=c17` · **con debugger** |
 | Python | `.py` | `python3 -u` |
 | JavaScript | `.js` `.mjs` | `node` |
 | Java | `.java` | `javac` + `java` |
 
 El lenguaje se detecta por la extensión del archivo activo: creás `script.py` en el explorador y "Ejecutar" ya lo corre con Python, sin configurar nada. El resaltado de sintaxis y el indicador de la barra de estado se ajustan solos.
+
+## Depurador
+
+El botón **Depurar** (o `F5`) corre el programa bajo **GDB** de verdad, no una simulación:
+
+- **Breakpoints**: click en la canaleta a la izquierda de los números de línea, como en VS Code. Se pueden poner y sacar incluso con la sesión ya corriendo.
+- **Variables locales** y **pila de llamadas** en el panel de la izquierda, actualizadas en cada pausa.
+- **Controles**: Continuar (`F8`), Siguiente/step over (`F10`), Entrar/step into (`F11`), Salir/step out (`Shift+F11`).
+- **La terminal sigue siendo interactiva mientras depurás**: el programa corre en su propia pty, separada del canal por el que el servidor habla con GDB, así que `cin`/`scanf` funcionan normal aunque estés pausado en un breakpoint.
+
+Por ahora solo aplica a C y C++ (GDB); con un archivo Python/JS/Java el botón se deshabilita y explica por qué, pero **Ejecutar** sigue funcionando igual.
 
 ## Cómo funciona
 
@@ -62,11 +73,14 @@ Nota: la persistencia en disco (y-leveldb) ya evita que se pierda algo por dejar
 
 ## Estructura
 
-- `server/index.js`: servidor Express + WebSocket. Rutea `/run-ws` a la terminal interactiva y todo lo demás (`/docs/<sala>`) a la sincronización Yjs; gatea ambos con la clave de acceso si está configurada.
+- `server/index.js`: servidor Express + WebSocket. Rutea `/run-ws` a la terminal interactiva, `/debug-ws` al depurador, y todo lo demás (`/docs/<sala>`) a la sincronización Yjs; gatea ambos con la clave de acceso si está configurada.
 - `server/auth.js`: clave compartida + tokens de sesión firmados (HMAC), sin base de datos de usuarios.
 - `server/languages.js`: registro de lenguajes (extensiones, comando de compilación y de ejecución de cada uno).
 - `server/build.js`: escribe el fuente en un directorio temporal aislado y lo compila si hace falta (sin usar shell).
+- `server/debug-session.js`: sesiones de depuración con GDB en modo MI (breakpoints, step, variables, pila), con el programa en una pty aparte para no mezclar su E/S con la del debugger.
+- `server/mi-parser.js`: parser del formato de salida MI de GDB.
 - `server/interactive-run.js`: maneja las sesiones interactivas por WebSocket (spawn de la pty, límites de concurrencia, timeouts de inactividad y duración máxima, listado/descarga de archivos generados).
 - `server/github-save.js`: guarda/carga el workspace completo de cada sala en este repo vía la Git Data API de GitHub (blobs + tree + commit, en un solo commit atómico).
+- `client/debug-ui.js`: extensión de CodeMirror para la canaleta de breakpoints y el resaltado de la línea pausada.
 - `client/main.js`: lógica del editor (CodeMirror + Yjs + terminal xterm.js + explorador de archivos + login), compilada a `public/bundle.js` con `npm run build`.
 - `public/index.html`: estructura y estilos de la página.
