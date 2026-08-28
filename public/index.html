@@ -1037,22 +1037,42 @@
       <div id="peers"></div>
       <button id="beautify" title="Ordenar la indentación y los espacios (Shift+Alt+F)">Formatear</button>
       <button id="debug" title="Depurar con breakpoints (F5)">Depurar</button>
-      <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">▶ Ejecutar</button>
+      <button id="run" title="Compilar y ejecutar (Ctrl+Enter)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Ejecutar
+      </button>
     </header>
     <div id="debug-toolbar">
       <span class="dbg-state" id="debug-state">Pausado</span>
-      <button id="dbg-continue" title="Continuar (F8)">▶ Continuar</button>
-      <button id="dbg-next" title="Ejecutar la linea y seguir (F10)">↷ Siguiente</button>
-      <button id="dbg-step" title="Entrar a la funcion (F11)">↓ Entrar</button>
-      <button id="dbg-finish" title="Salir de la funcion (Shift+F11)">↑ Salir</button>
+      <button id="dbg-continue" title="Continuar (F8)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Continuar
+      </button>
+      <button id="dbg-next" title="Ejecutar la linea y seguir (F10)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>
+        Siguiente
+      </button>
+      <button id="dbg-step" title="Entrar a la funcion (F11)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+        Entrar
+      </button>
+      <button id="dbg-finish" title="Salir de la funcion (Shift+F11)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        Salir
+      </button>
       <div class="spacer"></div>
-      <button id="dbg-stop" title="Terminar la sesion de depuracion">■ Detener</button>
+      <button id="dbg-stop" title="Terminar la sesion de depuracion">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+        Detener
+      </button>
     </div>
     <main>
       <div id="sidebar">
         <div id="sidebar-header">
           <span>Explorador</span>
-          <button id="new-file-btn" title="Nuevo archivo">+</button>
+          <button id="new-file-btn" title="Nuevo archivo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
         </div>
         <div id="new-file-row">
           <span class="file-dot"></span>
@@ -1076,7 +1096,10 @@
               <span class="fname" id="file-viewer-name"></span>
               <span id="file-viewer-meta"></span>
               <div class="spacer"></div>
-              <button id="file-viewer-download">⬇ Descargar</button>
+              <button id="file-viewer-download">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar
+              </button>
             </div>
             <pre id="file-viewer-body"></pre>
           </div>
@@ -1084,7 +1107,9 @@
         <div id="output-panel">
           <div id="panel-resize-handle" title="Arrastrar para redimensionar"></div>
           <div class="panel-header">
-            <button id="panel-toggle" title="Colapsar/expandir">▾</button>
+            <button id="panel-toggle" title="Colapsar/expandir">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
             <span>Salida</span>
             <span id="output-status">lista para ejecutar</span>
           </div>

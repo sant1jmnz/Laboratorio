@@ -539,6 +539,14 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
+// Iconos SVG lineales (estilo SF Symbols) para los botones que antes usaban
+// un glifo Unicode como "icono" (✕, ✏): el markup es estatico y de confianza,
+// nunca contiene datos del usuario, asi que innerHTML es seguro aca.
+const ICON_X =
+  '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const ICON_PENCIL =
+  '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+
 // El contenido (nombres de archivo y bytes) lo produce el programa que
 // corrio el usuario, asi que nunca se inserta como HTML sin escapar.
 function hexDump(bytes) {
@@ -628,7 +636,7 @@ function addOutputTab(socket, name) {
   const closeSpan = document.createElement('span');
   closeSpan.className = 'tab-close';
   closeSpan.title = 'Cerrar';
-  closeSpan.textContent = '✕';
+  closeSpan.innerHTML = ICON_X;
   btn.append(nameSpan, closeSpan);
   btn.addEventListener('click', (e) => {
     if (e.target.closest('.tab-close')) {
@@ -1164,7 +1172,7 @@ function renderFileList() {
 
     const renameBtn = document.createElement('button');
     renameBtn.type = 'button';
-    renameBtn.textContent = '✏';
+    renameBtn.innerHTML = ICON_PENCIL;
     renameBtn.title = 'Renombrar';
     renameBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1174,7 +1182,7 @@ function renderFileList() {
 
     const delBtn = document.createElement('button');
     delBtn.type = 'button';
-    delBtn.textContent = '✕';
+    delBtn.innerHTML = ICON_X;
     delBtn.title = 'Eliminar';
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
