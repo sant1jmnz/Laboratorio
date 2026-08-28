@@ -617,12 +617,31 @@ function fetchOutputFileContent(socket, name) {
     } else {
       const bytes = base64ToBytes(msg.base64);
       const text = decodeAsText(bytes);
-      outputFileCache.set(name, { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text });
+      const cached = { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text };
+      outputFileCache.set(name, cached);
+      syncGeneratedFileToExplorer(name, cached);
     }
     if (activeOutputTab === name) showOutputTab(name);
   };
   socket.addEventListener('message', onMessage);
   socket.send(JSON.stringify({ type: 'get-file', name }));
+}
+
+// El servidor borra el directorio de una corrida (y lo que el programa haya
+// generado, ej. Productos.txt via ofstream) unos minutos despues de que
+// termina. Para que no se pierda, los archivos generados de texto se
+// escriben tambien como un archivo mas del explorador colaborativo: quedan
+// en el mismo documento Yjs que main.cpp (persistido en Postgres), visibles
+// para todos en el proyecto, y sobreviven a que esa sesion de ejecucion expire.
+const GENERATED_SYNC_MAX_BYTES = 512 * 1024;
+
+function syncGeneratedFileToExplorer(name, cached) {
+  if (!currentDoc || !filesArray) return;
+  if (!cached.isText || cached.truncated || cached.size > GENERATED_SYNC_MAX_BYTES) return;
+  currentDoc.transact(() => {
+    if (!filesArray.toArray().includes(name)) filesArray.push([name]);
+    replaceYText(fileYText(name), cached.text);
+  });
 }
 
 function addOutputTab(socket, name) {
@@ -659,10 +678,11 @@ function resetOutputTabs() {
 
 function renderGeneratedFiles(files, socket) {
   for (const file of files) addOutputTab(socket, file.name);
-  if (files.length > 0 && activeOutputTab === null) {
-    showOutputTab(files[0].name);
-    fetchOutputFileContent(socket, files[0].name);
-  }
+  if (files.length > 0 && activeOutputTab === null) showOutputTab(files[0].name);
+  // Se piden todos (no solo el que se esta mostrando) para que la
+  // sincronizacion al explorador -ver syncGeneratedFileToExplorer- no
+  // dependa de que alguien abra la pestaña de cada archivo generado.
+  for (const file of files) fetchOutputFileContent(socket, file.name);
 }
 
 fileViewerDownloadBtn.addEventListener('click', () => {
