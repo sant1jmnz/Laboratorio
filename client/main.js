@@ -60,6 +60,7 @@ const newFileBtn = document.getElementById('new-file-btn');
 const newFileRow = document.getElementById('new-file-row');
 const newFileInput = document.getElementById('new-file-input');
 const langIndicatorEl = document.getElementById('lang-indicator');
+const beautifyBtn = document.getElementById('beautify');
 const debugBtn = document.getElementById('debug');
 const debugToolbar = document.getElementById('debug-toolbar');
 const debugStateEl = document.getElementById('debug-state');
@@ -598,6 +599,89 @@ function runCode() {
 }
 
 // ---------------------------------------------------------------------
+// Formatear el archivo activo
+// ---------------------------------------------------------------------
+let formatExtensions = [];
+
+function updateFormatAvailability(name) {
+  const can = formatExtensions.length === 0 || formatExtensions.includes(extOf(name));
+  beautifyBtn.disabled = !can;
+  beautifyBtn.title = can
+    ? 'Ordenar la indentación y los espacios (Shift+Alt+F)'
+    : 'No hay formateador para este tipo de archivo.';
+}
+
+/**
+ * Reemplaza el contenido de un Y.Text por otro, tocando solo el tramo que
+ * de verdad cambio (descarta el prefijo y el sufijo en comun).
+ *
+ * Importa porque borrar e insertar todo el archivo mandaria el documento
+ * entero por la red y mandaria al principio los cursores de los demas, aun
+ * cuando el formateo casi no cambio nada.
+ */
+function replaceYText(ytext, next) {
+  const current = ytext.toString();
+  if (current === next) return false;
+
+  let start = 0;
+  const maxStart = Math.min(current.length, next.length);
+  while (start < maxStart && current[start] === next[start]) start++;
+
+  let end = 0;
+  const maxEnd = Math.min(current.length - start, next.length - start);
+  while (end < maxEnd && current[current.length - 1 - end] === next[next.length - 1 - end]) end++;
+
+  const deleteLength = current.length - start - end;
+  const inserted = next.slice(start, next.length - end);
+
+  currentDoc.transact(() => {
+    if (deleteLength > 0) ytext.delete(start, deleteLength);
+    if (inserted) ytext.insert(start, inserted);
+  });
+  return true;
+}
+
+function flashButton(btn, text, ms = 1800) {
+  const original = btn.dataset.label ?? btn.textContent;
+  btn.dataset.label = original;
+  btn.textContent = text;
+  setTimeout(() => {
+    btn.textContent = btn.dataset.label ?? original;
+  }, ms);
+}
+
+async function beautifyCode() {
+  if (!currentDoc || !activeFile || beautifyBtn.disabled) return;
+  const ytext = fileYText(activeFile);
+
+  beautifyBtn.disabled = true;
+  flashButton(beautifyBtn, 'Formateando…', 60_000);
+  try {
+    const res = await authFetch('/api/format', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: ytext.toString(), fileName: activeFile }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      flashButton(beautifyBtn, replaceYText(ytext, data.code) ? '✓ Formateado' : 'Ya estaba ordenado');
+    } else {
+      flashButton(beautifyBtn, 'No se pudo');
+      setOutputStatus(data.message || 'no se pudo formatear', 'err');
+      setPanelCollapsed(false);
+      term.write(`\r\n\x1b[31m${data.message}\x1b[0m\r\n`);
+      if (data.output) term.write(data.output.replace(/\n/g, '\r\n'));
+    }
+  } catch {
+    flashButton(beautifyBtn, 'Error de red');
+  } finally {
+    beautifyBtn.disabled = false;
+  }
+}
+
+beautifyBtn.addEventListener('click', beautifyCode);
+
+// ---------------------------------------------------------------------
 // Depurador (GDB por WebSocket)
 // ---------------------------------------------------------------------
 let debugSocket = null;
@@ -904,6 +988,7 @@ function switchToFile(name) {
   createEditorForFile(fileYText(name), name);
   langIndicatorEl.textContent = languageLabelFor(name);
   updateDebugAvailability(name);
+  updateFormatAvailability(name);
   applyBreakpoints(currentView, [...(breakpointsByFile.get(name) ?? [])]);
   bootHintEl.classList.add('hidden');
   renderFileList();
@@ -1017,6 +1102,7 @@ function renameFile(oldName, rawNewName) {
     createEditorForFile(newText, newName);
     langIndicatorEl.textContent = languageLabelFor(newName);
     updateDebugAvailability(newName);
+    updateFormatAvailability(newName);
   }
   renderFileList();
 }
@@ -1306,11 +1392,13 @@ async function openProject(id) {
 function startApp() {
   fetch('/api/config')
     .then((r) => r.json())
-    .then(({ languages }) => {
-      languageCatalog = languages || [];
+    .then((cfg) => {
+      languageCatalog = cfg.languages || [];
+      formatExtensions = cfg.formatExtensions || [];
       if (activeFile) {
         langIndicatorEl.textContent = languageLabelFor(activeFile);
         updateDebugAvailability(activeFile);
+        updateFormatAvailability(activeFile);
       }
     })
     .catch(() => {});
@@ -1458,6 +1546,11 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
     runCode();
+    return;
+  }
+  if (e.shiftKey && e.altKey && (e.key === 'F' || e.key === 'f')) {
+    e.preventDefault();
+    beautifyCode();
     return;
   }
   if (e.key === 'F5') {

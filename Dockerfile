@@ -1,13 +1,21 @@
 FROM node:20-slim
 
-# Toolchains de los lenguajes que el editor puede ejecutar (g++/gcc para
-# C++ y C, python3, default-jdk para Java; Node ya viene en la imagen base)
-# mas gdb para el debugger. python3/make ademas son los que necesita
-# node-gyp para compilar los addons nativos (node-pty, classic-level) si no
-# hay binario prebuildeado para esta plataforma.
+# Toolchains de los lenguajes que el editor ejecuta (g++/gcc para C++ y C,
+# python3, default-jdk para Java; Node ya viene en la imagen base), gdb para
+# el depurador y clang-format para el boton "Formatear" (cubre C, C++, Java
+# y JavaScript). python3/make ademas son los que necesita node-gyp para
+# compilar el addon nativo de node-pty si no hay binario prebuildeado.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        g++ gcc gdb python3 make default-jdk-headless \
+        g++ gcc gdb python3 make default-jdk-headless clang-format \
+    && rm -rf /var/lib/apt/lists/*
+
+# black formatea Python. Va aparte y tolera el fallo a proposito: si el
+# paquete no estuviera en esta base, el resto del editor tiene que seguir
+# funcionando igual (el boton avisa que falta el formateador).
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends black \
+        || echo 'AVISO: black no disponible; el formateo de Python quedara deshabilitado') \
     && rm -rf /var/lib/apt/lists/*
 
 # Usuario sin privilegios con el que corren los programas de los usuarios.

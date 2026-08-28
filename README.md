@@ -14,6 +14,16 @@ Editor de código multi-lenguaje tipo VS Code donde varias personas editan a la 
 
 El lenguaje se detecta por la extensión del archivo activo: creás `script.py` en el explorador y "Ejecutar" ya lo corre con Python, sin configurar nada. El resaltado de sintaxis y el indicador de la barra de estado se ajustan solos.
 
+## Formatear código
+
+El botón **Formatear** (o `Shift+Alt+F`, igual que VS Code) ordena la indentación, los espacios y las llaves del archivo activo. Usa **clang-format** para C, C++, Java y JavaScript, y **black** para Python — las mismas herramientas estándar de cada lenguaje, no reglas caseras.
+
+Detalles que importan:
+
+- **Respeta la colaboración**: en vez de reemplazar todo el archivo, calcula el prefijo y el sufijo que no cambiaron y toca solo el tramo del medio, así los cursores de los demás no saltan al principio y el cambio viaja chico por la red.
+- Si el código tiene un error de sintaxis, el formateador falla: en ese caso el código queda **intacto** y el motivo aparece en el panel de salida.
+- Con un archivo sin formateador (`.txt`, por ejemplo) el botón se deshabilita y explica por qué.
+
 ## Depurador
 
 El botón **Depurar** (o `F5`) corre el programa bajo **GDB** de verdad, no una simulación:
@@ -116,6 +126,7 @@ Nota: el contenido ya se guarda solo en Postgres mientras escribís, así que no
 - `server/projects.js`: alta, listado, permisos y persistencia del contenido de cada proyecto.
 - `server/languages.js`: registro de lenguajes (extensiones, comando de compilación y de ejecución de cada uno).
 - `server/build.js`: escribe el fuente en un directorio temporal aislado y lo compila si hace falta (sin usar shell).
+- `server/format.js`: formatea el archivo activo con clang-format o black, por stdin/stdout (nunca toca el disco).
 - `server/debug-session.js`: sesiones de depuración con GDB en modo MI (breakpoints, step, variables, pila), con el programa en una pty aparte para no mezclar su E/S con la del debugger.
 - `server/mi-parser.js`: parser del formato de salida MI de GDB.
 - `server/interactive-run.js`: maneja las sesiones interactivas por WebSocket (spawn de la pty, límites de concurrencia, timeouts de inactividad y duración máxima, listado/descarga de archivos generados).

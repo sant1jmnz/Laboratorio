@@ -9,6 +9,7 @@ import { handleInteractiveConnection } from './interactive-run.js';
 import { handleDebugConnection } from './debug-session.js';
 import { isConfigured, loadWorkspace, saveWorkspace } from './github-save.js';
 import { languageSummaries } from './languages.js';
+import { formatCode, formatExtensions } from './format.js';
 import { dbEnabled, initSchema } from './db.js';
 import { getUser, issueSession, loginUser, readSession, registerUser } from './accounts.js';
 import {
@@ -116,7 +117,11 @@ function needsDb(_req, res, next) {
 }
 
 app.get('/api/config', (_req, res) => {
-  res.json({ accounts: dbEnabled(), languages: languageSummaries() });
+  res.json({
+    accounts: dbEnabled(),
+    languages: languageSummaries(),
+    formatExtensions: formatExtensions(),
+  });
 });
 
 // ---- Cuentas ----
@@ -220,6 +225,16 @@ app.delete('/api/projects/:id', needsDb, requireAuth, async (req, res) => {
 });
 
 // ---- Guardado en GitHub (opcional) ----
+
+app.post('/api/format', requireAuth, async (req, res) => {
+  const { code, fileName } = req.body ?? {};
+  try {
+    const result = await formatCode(code, fileName);
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch {
+    res.status(500).json({ ok: false, message: 'Error inesperado al formatear.' });
+  }
+});
 
 app.get('/api/save-status', requireAuth, (_req, res) => {
   res.json({ enabled: isConfigured() });
