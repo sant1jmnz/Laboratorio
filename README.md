@@ -84,6 +84,14 @@ Necesita una base Postgres. El disco del plan free de Render se borra en cada re
 
 Las tablas se crean solas al arrancar. Sin `DATABASE_URL` el editor arranca igual pero sin cuentas ni proyectos guardados (modo suelto, para probar).
 
+**Nota sobre Supabase**: usá la cadena del **Session pooler** (la "Direct connection" es solo IPv6 y Render no la alcanza), y si la contraseña tiene caracteres especiales, codificalos en la URL (`/` es `%2F`, `@` es `%40`).
+
+### Por qué las tablas quedan cerradas
+
+Supabase publica el schema `public` por una API REST automática. Sin protección, cualquiera con la *anon key* del proyecto podría leer la tabla `users` — hashes de contraseñas incluidos — o borrar proyectos ajenos **sin pasar por este servidor**. Lo verifiqué contra un Postgres con los mismos roles que usa Supabase: se podía leer y borrar todo.
+
+Por eso `initSchema()` cierra las tablas al arrancar: activa RLS sin políticas y revoca los permisos de los roles `anon`/`authenticated`. El backend se conecta como dueño de las tablas, y el dueño no queda sujeto a RLS, así que sigue funcionando sin cambios. Esto también hace desaparecer los avisos "RLS Disabled in Public" del Security Advisor de Supabase.
+
 ## Guardar el workspace en GitHub
 
 El botón **Guardar** commitea *todos* los archivos del proyecto actual a este mismo repo (`saves/<id-del-proyecto>/<archivo>`, en una branch separada — `code-saves` por defecto — para no ensuciar el historial de desarrollo), en un único commit. Al entrar a un proyecto vacío, si hay una versión guardada la carga automáticamente en vez del ejemplo por defecto.

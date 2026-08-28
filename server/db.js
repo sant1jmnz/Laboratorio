@@ -79,7 +79,49 @@ export async function initSchema() {
   `);
   await query(`CREATE INDEX IF NOT EXISTS visits_user_idx ON project_visits (user_id, last_seen DESC);`);
 
+  await lockDownTables();
   return true;
+}
+
+const APP_TABLES = ['users', 'projects', 'project_docs', 'project_visits'];
+
+/**
+ * Cierra las tablas a todo el mundo salvo a esta app.
+ *
+ * Supabase publica automaticamente el schema `public` por una API REST, asi
+ * que cualquiera con la anon key del proyecto podria leer la tabla `users`
+ * (con los hashes de contraseñas) o tocar proyectos ajenos sin pasar por
+ * nuestro servidor. Nosotros no usamos esa API, asi que la cerramos:
+ *
+ *  - RLS activado y SIN politicas: los roles de la API (anon/authenticated)
+ *    no pueden ver ni escribir una sola fila.
+ *  - Ademas revocamos los permisos que Supabase les concede por defecto.
+ *
+ * Nuestro backend se conecta como dueño de las tablas, y el dueño no queda
+ * sujeto a RLS (salvo FORCE ROW LEVEL SECURITY, que no usamos), asi que
+ * sigue funcionando igual.
+ */
+async function lockDownTables() {
+  for (const table of APP_TABLES) {
+    await query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+  }
+
+  // Los roles anon/authenticated solo existen en Supabase; en un Postgres
+  // comun no estan y el REVOKE fallaria, por eso el chequeo previo.
+  await query(`
+    DO $$
+    DECLARE r text;
+    BEGIN
+      FOREACH r IN ARRAY ARRAY['anon', 'authenticated']
+      LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+          EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I', r);
+          EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %I', r);
+          EXECUTE format('REVOKE ALL ON SCHEMA public FROM %I', r);
+        END IF;
+      END LOOP;
+    END $$;
+  `);
 }
 
 export async function closePool() {
