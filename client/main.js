@@ -905,6 +905,7 @@ function switchToFile(name) {
   langIndicatorEl.textContent = languageLabelFor(name);
   updateDebugAvailability(name);
   applyBreakpoints(currentView, [...(breakpointsByFile.get(name) ?? [])]);
+  bootHintEl.classList.add('hidden');
   renderFileList();
 }
 
@@ -973,9 +974,13 @@ function deleteFile(name) {
   if (!window.confirm(`¿Eliminar "${name}"? Esta accion no se puede deshacer.`)) return;
   const idx = names.indexOf(name);
   if (idx === -1) return;
-  const yt = fileYText(name);
-  yt.delete(0, yt.length);
-  filesArray.delete(idx, 1);
+  // En una sola transaccion: los demas ven un unico cambio, no un estado
+  // intermedio raro.
+  currentDoc.transact(() => {
+    const yt = fileYText(name);
+    yt.delete(0, yt.length);
+    filesArray.delete(idx, 1);
+  });
   if (activeFile === name) {
     const remaining = filesArray.toArray();
     switchToFile(remaining[0]);
@@ -995,13 +1000,17 @@ function renameFile(oldName, rawNewName) {
   const idx = names.indexOf(oldName);
   if (idx === -1) return;
 
-  const oldText = fileYText(oldName);
   const newText = fileYText(newName);
-  newText.insert(0, oldText.toString());
-  oldText.delete(0, oldText.length);
-
-  filesArray.delete(idx, 1);
-  filesArray.insert(idx, [newName]);
+  // Todo el renombrado va en una transaccion. Si el borrado y el alta
+  // viajaran por separado, los demas verian un instante con la lista
+  // incompleta y el que tuviera abierto ese archivo se quedaria sin ninguno.
+  currentDoc.transact(() => {
+    const oldText = fileYText(oldName);
+    newText.insert(0, oldText.toString());
+    oldText.delete(0, oldText.length);
+    filesArray.delete(idx, 1);
+    filesArray.insert(idx, [newName]);
+  });
 
   if (activeFile === oldName) {
     activeFile = newName;
@@ -1017,20 +1026,38 @@ function showNewFileRow() {
   newFileInput.value = '';
   newFileInput.focus();
 }
-function hideNewFileRow() {
+
+/**
+ * Cierra la fila de "archivo nuevo".
+ *
+ * Por defecto confirma lo que se haya escrito: si alguien tipea el nombre y
+ * hace click en el editor para empezar a programar (en vez de apretar
+ * Enter), lo esperable es que el archivo quede creado, no que se pierda en
+ * silencio. Con Escape sí se descarta.
+ */
+function hideNewFileRow({ confirm = true } = {}) {
+  const name = newFileInput.value;
+  newFileInput.value = '';
   newFileRow.classList.remove('visible');
+  if (confirm && name.trim()) createFile(name);
 }
 
-newFileBtn.addEventListener('click', showNewFileRow);
+newFileBtn.addEventListener('click', () => {
+  // Si ya estaba abierta, el segundo click la cierra en vez de no hacer nada.
+  if (newFileRow.classList.contains('visible')) hideNewFileRow();
+  else showNewFileRow();
+});
+
 newFileInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
-    createFile(newFileInput.value);
     hideNewFileRow();
   } else if (e.key === 'Escape') {
-    hideNewFileRow();
+    hideNewFileRow({ confirm: false });
   }
 });
-newFileInput.addEventListener('blur', hideNewFileRow);
+// Envuelto a proposito: el listener recibe el evento como argumento y no
+// queremos que se cuele como opciones de hideNewFileRow.
+newFileInput.addEventListener('blur', () => hideNewFileRow());
 
 // ---------------------------------------------------------------------
 // Conexion a la sala
@@ -1066,7 +1093,26 @@ function joinRoom(room) {
     else setStatus('offline', 'Desconectado');
   });
 
-  filesArray.observe(() => renderFileList());
+  filesArray.observe(() => {
+    // Si otra persona borro o renombro el archivo que estabas viendo, el
+    // editor quedaria enganchado a un documento que ya no existe: seguirias
+    // escribiendo y nadie lo veria. Saltamos al primer archivo disponible.
+    const names = filesArray.toArray();
+    const orphaned = activeFile && !names.includes(activeFile);
+
+    if ((orphaned || !activeFile) && names.length > 0) {
+      switchToFile(names[0]);
+      return;
+    }
+    if (orphaned) {
+      activeFile = null;
+      currentView?.destroy();
+      currentView = null;
+      bootHintEl.textContent = 'No quedan archivos. Creá uno con el + del explorador.';
+      bootHintEl.classList.remove('hidden');
+    }
+    renderFileList();
+  });
 
   // Solo sembramos contenido una vez que confirmamos con el servidor que el
   // workspace esta vacio, para no pisar/duplicar contenido de otros
