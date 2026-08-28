@@ -980,6 +980,7 @@ function createEditorForFile(ytext, fileName) {
 }
 
 function switchToFile(name) {
+  showOutputTab(null); // elegir un archivo fuente cierra el visor de generados, que tapa el editor
   if (!name || name === activeFile) {
     renderFileList();
     return;
