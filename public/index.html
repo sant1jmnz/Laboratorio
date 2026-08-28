@@ -508,7 +508,11 @@
   #file-viewer-body .hex-bytes { color: #b5cea8; }
   #file-viewer-body .hex-ascii { color: #9cdcfe; }
 
-  /* Panel de salida, tipo terminal integrado */
+  /* Panel de salida, tipo terminal integrado.
+     La altura la maneja un spring en JS (interrumpible: se puede agarrar el
+     borde a mitad de una animacion y redirigirla), asi que no hay
+     "transition: height" en CSS — competiria con el rAF del spring. La
+     regla .collapsed es solo el valor inicial antes de que el JS arranque. */
   #output-panel {
     flex: none;
     height: 230px;
@@ -516,9 +520,22 @@
     flex-direction: column;
     background: var(--panel-bg);
     border-top: 1px solid var(--panel-border);
-    transition: height 0.32s var(--ease);
+    position: relative;
   }
   #output-panel.collapsed { height: 36px; }
+
+  /* Franja invisible sobre el borde superior: agarrala y arrastrala para
+     redimensionar el panel, como el splitter de VS Code. */
+  #panel-resize-handle {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 9px;
+    cursor: ns-resize;
+    z-index: 5;
+    touch-action: none;
+  }
 
   #output-panel .panel-header {
     height: 36px;
@@ -640,8 +657,16 @@
     align-items: center;
     justify-content: center;
     z-index: 100;
+    opacity: 0;
   }
-  #login-overlay.visible { display: flex; }
+  #login-overlay.visible {
+    display: flex;
+    animation: scrim-in 0.28s var(--ease) forwards;
+  }
+  @keyframes scrim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 
   /* ---- Depurador ---- */
 
@@ -818,18 +843,27 @@
   }
   .login-switch button:hover { background: none; text-decoration: underline; }
 
-  /* ---- Panel "Mis proyectos" ---- */
+  /* ---- Panel "Mis proyectos" ----
+     Se abre encima del editor (no reemplaza la pagina como el login), asi
+     que va como scrim translucido con blur -material de verdad, no un
+     color solido tapando todo- y el editor de atras se nota, dimmeado. */
   #projects-overlay {
     position: fixed;
     inset: 0;
-    background: var(--editor-bg);
+    background: rgba(10, 10, 12, 0.55);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
     display: none;
     align-items: center;
     justify-content: center;
     padding: 24px;
     z-index: 90;
+    opacity: 0;
   }
-  #projects-overlay.visible { display: flex; }
+  #projects-overlay.visible {
+    display: flex;
+    animation: scrim-in 0.28s var(--ease) forwards;
+  }
 
   #projects-card {
     width: 100%;
@@ -1048,6 +1082,7 @@
           </div>
         </div>
         <div id="output-panel">
+          <div id="panel-resize-handle" title="Arrastrar para redimensionar"></div>
           <div class="panel-header">
             <button id="panel-toggle" title="Colapsar/expandir">▾</button>
             <span>Salida</span>

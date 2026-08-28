@@ -47,6 +47,7 @@ const statusEl = document.getElementById('status');
 const statusTextEl = document.getElementById('status-text');
 const outputPanel = document.getElementById('output-panel');
 const panelToggle = document.getElementById('panel-toggle');
+const panelResizeHandle = document.getElementById('panel-resize-handle');
 const outputStatus = document.getElementById('output-status');
 const terminalEl = document.getElementById('terminal');
 const fileTabsEl = document.getElementById('file-tabs');
@@ -342,10 +343,158 @@ async function copyShareLink() {
   }, 1500);
 }
 
-function setPanelCollapsed(collapsed) {
-  // El chevron gira por CSS (#panel-toggle), no cambiando el caracter.
-  outputPanel.classList.toggle('collapsed', collapsed);
+// ---------------------------------------------------------------------
+// Spring critico (parametros al estilo SwiftUI: response + dampingRatio en
+// vez de masa/rigidez/friccion crudas). Es interrumpible: "to()" siempre
+// arranca desde el valor actual, nunca del target logico, asi que se puede
+// re-apuntar a mitad de la animacion sin que el panel salte.
+// Ver skill apple-design, "Interruptibilidad" y "Comportamiento sobre animacion".
+// ---------------------------------------------------------------------
+function createSpring(initial, onUpdate) {
+  let value = initial;
+  let velocity = 0;
+  let target = initial;
+  let dampingRatio = 1;
+  let response = 0.32;
+  let rafId = null;
+
+  function step() {
+    const omega = (2 * Math.PI) / response;
+    const k = omega * omega;
+    const c = 2 * dampingRatio * omega;
+    const dt = 1 / 60;
+    const accel = -k * (value - target) - c * velocity;
+    velocity += accel * dt;
+    value += velocity * dt;
+    onUpdate(value);
+    if (Math.abs(value - target) < 0.5 && Math.abs(velocity) < 0.5) {
+      value = target;
+      onUpdate(value);
+      rafId = null;
+      return;
+    }
+    rafId = requestAnimationFrame(step);
+  }
+
+  return {
+    to(newTarget, { velocity: v, dampingRatio: d = 1, response: r = 0.32 } = {}) {
+      target = newTarget;
+      dampingRatio = d;
+      response = r;
+      if (v !== undefined) velocity = v;
+      if (!rafId) rafId = requestAnimationFrame(step);
+    },
+    // Corta el spring y fija el valor de una: lo que usamos mientras el
+    // dedo/mouse arrastra el panel 1:1, sin ninguna animacion de por medio.
+    jump(newValue) {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      value = newValue;
+      target = newValue;
+      velocity = 0;
+      onUpdate(value);
+    },
+    get value() {
+      return value;
+    },
+  };
 }
+
+// Resistencia progresiva al pasar un limite: cuanto mas te alejas, menos
+// seguis al puntero, en vez de frenar en seco. Formula de la skill apple-design.
+function rubberband(overshoot, dimension, constant = 0.55) {
+  return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+}
+
+// Proyecta donde terminaria de asentarse un gesto si siguiera frenando solo,
+// igual que el scroll con inercia (misma formula que usa iOS internamente).
+function projectMomentum(velocityPxPerSec, decelerationRate = 0.998) {
+  return (velocityPxPerSec / 1000) * (decelerationRate / (1 - decelerationRate));
+}
+
+const PANEL_COLLAPSED_HEIGHT = 36;
+const PANEL_MIN_HEIGHT = 120;
+let panelExpandedHeight = 230; // ultima altura "abierta" que se recuerda
+
+function panelMaxHeight() {
+  return Math.max(PANEL_MIN_HEIGHT, window.innerHeight - 260);
+}
+
+const panelSpring = createSpring(outputPanel.getBoundingClientRect().height || 230, (h) => {
+  outputPanel.style.height = `${h}px`;
+  outputPanel.classList.toggle('collapsed', h <= PANEL_COLLAPSED_HEIGHT + 4);
+});
+
+function isPanelCollapsed() {
+  return outputPanel.classList.contains('collapsed');
+}
+
+function setPanelCollapsed(collapsed, { velocity = 0 } = {}) {
+  const target = collapsed
+    ? PANEL_COLLAPSED_HEIGHT
+    : Math.min(panelExpandedHeight, panelMaxHeight());
+  panelSpring.to(target, { velocity, dampingRatio: 1, response: 0.32 });
+}
+
+// Arrastrar el borde superior del panel lo redimensiona en vivo (1:1, sin
+// spring de por medio); al soltar, la velocidad del gesto se proyecta hacia
+// adelante -como el scroll con inercia- para decidir el destino, y esa misma
+// velocidad se le pasa al spring para que la transicion sea continua, sin
+// costura entre "arrastrar" y "animar".
+panelResizeHandle.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  panelResizeHandle.setPointerCapture(e.pointerId);
+  const startY = e.clientY;
+  const startHeight = outputPanel.getBoundingClientRect().height;
+  const min = PANEL_MIN_HEIGHT;
+  const max = panelMaxHeight();
+  let history = [{ y: e.clientY, t: performance.now() }];
+
+  function onMove(ev) {
+    const dy = startY - ev.clientY; // arrastrar hacia arriba agranda el panel
+    let h = startHeight + dy;
+    if (h < min) h = min - rubberband(min - h, 60);
+    else if (h > max) h = max + rubberband(h - max, 60);
+    panelSpring.jump(Math.max(4, h));
+    history.push({ y: ev.clientY, t: performance.now() });
+    if (history.length > 6) history.shift();
+  }
+
+  function onUp() {
+    panelResizeHandle.releasePointerCapture(e.pointerId);
+    panelResizeHandle.removeEventListener('pointermove', onMove);
+    panelResizeHandle.removeEventListener('pointerup', onUp);
+
+    const first = history[0];
+    const last = history[history.length - 1];
+    const dt = Math.max(1, last.t - first.t) / 1000;
+    const heightVelocity = (first.y - last.y) / dt; // px/s; positivo = agrandando
+
+    const projected = panelSpring.value + projectMomentum(heightVelocity);
+
+    if (projected < min * 0.55) {
+      panelSpring.to(PANEL_COLLAPSED_HEIGHT, { velocity: heightVelocity, dampingRatio: 1, response: 0.32 });
+    } else {
+      const targetHeight = Math.min(max, Math.max(min, projected));
+      panelExpandedHeight = targetHeight;
+      panelSpring.to(targetHeight, { velocity: heightVelocity, dampingRatio: 0.86, response: 0.34 });
+    }
+  }
+
+  panelResizeHandle.addEventListener('pointermove', onMove);
+  panelResizeHandle.addEventListener('pointerup', onUp);
+});
+
+panelResizeHandle.addEventListener('dblclick', () => {
+  if (!isPanelCollapsed()) panelExpandedHeight = panelSpring.value;
+  setPanelCollapsed(!isPanelCollapsed());
+});
+
+window.addEventListener('resize', () => {
+  if (!isPanelCollapsed() && panelSpring.value > panelMaxHeight()) {
+    panelSpring.jump(panelMaxHeight());
+  }
+});
 
 function setOutputStatus(text, className) {
   outputStatus.textContent = text;
@@ -1539,7 +1688,9 @@ shareBtn.addEventListener('click', copyShareLink);
 saveBtn.addEventListener('click', saveCurrentCode);
 runBtn.addEventListener('click', runCode);
 panelToggle.addEventListener('click', () => {
-  setPanelCollapsed(!outputPanel.classList.contains('collapsed'));
+  const collapsed = isPanelCollapsed();
+  if (!collapsed) panelExpandedHeight = panelSpring.value;
+  setPanelCollapsed(!collapsed);
 });
 
 // Atajos globales, con los mismos bindings que VS Code para depurar.
