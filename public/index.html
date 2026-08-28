@@ -347,8 +347,17 @@
     align-items: center;
     gap: 8px;
     padding: 4px 16px 6px;
+    opacity: 0;
+    transform: translateY(-4px);
   }
-  #new-file-row.visible { display: flex; }
+  #new-file-row.visible {
+    display: flex;
+    animation: row-in 0.24s var(--ease) forwards;
+  }
+  @keyframes row-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+  }
   #new-file-row .file-dot { width: 7px; height: 7px; border-radius: 50%; background: #6a6a6a; flex: none; }
   #new-file-input {
     flex: 1;
@@ -448,15 +457,27 @@
   }
   #boot-hint.hidden { opacity: 0; pointer-events: none; }
 
-  /* Visor de archivo generado (texto o hex dump) */
+  /* Visor de archivo generado (texto o hex dump). Se materializa en vez de
+     solo aparecer: nace un poco desenfocado y chico, como una superficie
+     de verdad asentandose, no un simple corte de opacidad. */
   #file-viewer {
     display: none;
     position: absolute;
     inset: 0;
     background: var(--editor-bg);
     flex-direction: column;
+    opacity: 0;
+    transform: scale(0.98);
+    filter: blur(6px);
   }
-  #file-viewer.visible { display: flex; }
+  #file-viewer.visible {
+    display: flex;
+    animation: materialize 0.32s var(--ease) forwards;
+  }
+  @keyframes materialize {
+    from { opacity: 0; transform: scale(0.98); filter: blur(6px); }
+    to { opacity: 1; transform: none; filter: blur(0); }
+  }
 
   #file-viewer-toolbar {
     flex: none;
@@ -664,8 +685,12 @@
     border-top: 1px solid var(--panel-border);
     margin-top: 6px;
     overflow-y: auto;
+    opacity: 0;
   }
-  #debug-panel.visible { display: flex; }
+  #debug-panel.visible {
+    display: flex;
+    animation: materialize 0.32s var(--ease) forwards;
+  }
 
   .dbg-section-title {
     flex: none;
