@@ -770,6 +770,143 @@
   }
   #login-submit:hover { background: var(--accent-hover); }
   #login-error { font-size: 12.5px; color: var(--err); min-height: 16px; text-align: center; }
+  .login-switch {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .login-switch button {
+    background: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .login-switch button:hover { background: none; text-decoration: underline; }
+
+  /* ---- Panel "Mis proyectos" ---- */
+  #projects-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--editor-bg);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 90;
+  }
+  #projects-overlay.visible { display: flex; }
+
+  #projects-card {
+    width: 100%;
+    max-width: 620px;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: #2c2c2e;
+    border: 1px solid var(--panel-border);
+    border-radius: 20px;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    animation: sheet-in 0.42s var(--ease);
+  }
+
+  #projects-header {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--panel-border);
+    height: auto;
+    background: none;
+    backdrop-filter: none;
+  }
+  #projects-user { font-size: 12.5px; color: var(--text-dim); }
+
+  #new-project-form {
+    flex: none;
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  #new-project-name {
+    flex: 1;
+    min-width: 0;
+    background: rgba(118, 118, 128, 0.24);
+    color: var(--text);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    font-family: var(--sans);
+    font-size: 13.5px;
+    outline: none;
+    transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+  }
+  #new-project-name:focus {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 3.5px rgba(10, 132, 255, 0.25);
+  }
+  #new-project-btn {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    padding: 9px 15px;
+    border-radius: var(--radius);
+  }
+  #new-project-btn:hover { background: var(--accent-hover); }
+
+  #projects-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 12px 16px; }
+
+  .projects-section-title {
+    padding: 12px 8px 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-dim);
+  }
+  .projects-list:empty::after {
+    content: 'Todavía no hay nada acá.';
+    display: block;
+    padding: 2px 8px 4px;
+    font-size: 12.5px;
+    color: var(--text-faint);
+    font-style: italic;
+  }
+
+  .project-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.16s var(--ease);
+  }
+  .project-row:hover { background: rgba(255, 255, 255, 0.07); }
+  .project-main { flex: 1; min-width: 0; }
+  .project-name {
+    font-size: 13.5px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .project-meta {
+    font-size: 11.5px;
+    color: var(--text-faint);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+  .project-actions { display: flex; gap: 4px; flex: none; opacity: 0; transition: opacity 0.16s var(--ease); }
+  .project-row:hover .project-actions { opacity: 1; }
+  .project-actions button { padding: 4px 8px; font-size: 11.5px; }
+  .project-actions .danger:hover { background: var(--err); color: #fff; }
 </style>
 </head>
 <body>
@@ -779,11 +916,42 @@
         <span class="brand-mark">{ }</span>
         <span>Editor colaborativo</span>
       </div>
-      <p>Esta sala esta protegida. Ingresá la clave para entrar.</p>
-      <input id="login-password" type="password" placeholder="Clave de acceso" autocomplete="current-password" autofocus />
+      <p id="login-subtitle">Entrá con tu cuenta para ver tus proyectos.</p>
+      <input id="login-username" type="text" placeholder="Usuario" autocomplete="username" spellcheck="false" autofocus />
+      <input id="login-password" type="password" placeholder="Contraseña" autocomplete="current-password" />
       <button type="submit" id="login-submit">Entrar</button>
       <div id="login-error"></div>
+      <div class="login-switch">
+        <span id="login-switch-text">¿No tenés cuenta?</span>
+        <button type="button" id="login-switch-btn">Crear una</button>
+      </div>
     </form>
+  </div>
+
+  <div id="projects-overlay">
+    <div id="projects-card">
+      <header id="projects-header">
+        <div class="brand">
+          <span class="brand-mark">{ }</span>
+          <span>Mis proyectos</span>
+        </div>
+        <div class="spacer"></div>
+        <span id="projects-user"></span>
+        <button id="logout-btn" title="Cerrar sesion">Salir</button>
+      </header>
+
+      <form id="new-project-form">
+        <input id="new-project-name" type="text" placeholder="Nombre del proyecto nuevo" maxlength="80" />
+        <button type="submit" id="new-project-btn">Crear proyecto</button>
+      </form>
+
+      <div id="projects-body">
+        <div class="projects-section-title">Tuyos</div>
+        <div id="projects-own" class="projects-list"></div>
+        <div class="projects-section-title">Compartidos con vos</div>
+        <div id="projects-shared" class="projects-list"></div>
+      </div>
+    </div>
   </div>
 
   <div id="app">
@@ -793,12 +961,12 @@
         <span>Editor colaborativo</span>
       </div>
       <div class="divider"></div>
+      <button id="projects-btn" title="Ver todos mis proyectos">Proyectos</button>
       <div class="room-field">
-        <button id="room-chip" title="Click para cambiar de sala"><span id="room-name"></span></button>
+        <button id="room-chip" title="Nombre del proyecto (click para renombrar)"><span id="room-name"></span></button>
         <input id="room" type="text" autocomplete="off" spellcheck="false" hidden />
       </div>
-      <button id="new-room" title="Empezar una sala nueva y vacia">Nueva</button>
-      <button id="share" title="Copiar el link para invitar a alguien">Invitar</button>
+      <button id="share" title="Copiar el link para compartir este proyecto">Compartir</button>
       <button id="save" title="Guardar el codigo en GitHub">Guardar</button>
       <div class="spacer"></div>
       <div id="peers"></div>

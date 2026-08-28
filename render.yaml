@@ -17,7 +17,10 @@ services:
         sync: false
       - key: GITHUB_SAVE_BRANCH
         sync: false
-      # Clave compartida para entrar al editor (opcional). Sin esto la app
-      # queda abierta para cualquiera con el link.
-      - key: APP_PASSWORD
+      # Postgres para las cuentas y los proyectos. Sin esto el editor
+      # arranca sin cuentas. Usa una base externa (Neon/Supabase): el disco
+      # de Render se borra en cada redeploy.
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
         sync: false

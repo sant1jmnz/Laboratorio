@@ -17,13 +17,26 @@ import { applyBreakpoints, applyPausedLine, breakpointGutter } from './debug-ui.
 
 const loginOverlay = document.getElementById('login-overlay');
 const loginCard = document.getElementById('login-card');
+const loginUsername = document.getElementById('login-username');
 const loginPassword = document.getElementById('login-password');
 const loginError = document.getElementById('login-error');
+const loginSubtitle = document.getElementById('login-subtitle');
+const loginSubmit = document.getElementById('login-submit');
+const loginSwitchText = document.getElementById('login-switch-text');
+const loginSwitchBtn = document.getElementById('login-switch-btn');
+
+const projectsOverlay = document.getElementById('projects-overlay');
+const projectsBtn = document.getElementById('projects-btn');
+const projectsUserEl = document.getElementById('projects-user');
+const logoutBtn = document.getElementById('logout-btn');
+const newProjectForm = document.getElementById('new-project-form');
+const newProjectName = document.getElementById('new-project-name');
+const projectsOwnEl = document.getElementById('projects-own');
+const projectsSharedEl = document.getElementById('projects-shared');
 
 const roomInput = document.getElementById('room');
 const roomChip = document.getElementById('room-chip');
 const roomNameEl = document.getElementById('room-name');
-const newRoomBtn = document.getElementById('new-room');
 const shareBtn = document.getElementById('share');
 const saveBtn = document.getElementById('save');
 const runBtn = document.getElementById('run');
@@ -66,9 +79,12 @@ const userName = 'Usuario-' + Math.floor(Math.random() * 1000);
 const DEFAULT_CODE = '#include <iostream>\n\nint main() {\n    std::cout << "Hola mundo" << std::endl;\n    return 0;\n}\n';
 
 // ---------------------------------------------------------------------
-// Autenticacion: clave compartida opcional (APP_PASSWORD en el server).
+// Cuentas de usuario: cada persona tiene sus proyectos y su historial.
 // ---------------------------------------------------------------------
 const AUTH_TOKEN_KEY = 'editorAuthToken';
+let currentUser = null;
+let accountsEnabled = false;
+let loginMode = 'login'; // 'login' | 'register'
 
 function getToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -95,43 +111,77 @@ async function authFetch(url, options = {}) {
     ...options,
     headers: { ...(options.headers || {}), ...authHeaders() },
   });
-  if (res.status === 401) {
+  if (res.status === 401 && accountsEnabled) {
     clearToken();
-    showLogin('Tu sesion expiro. Ingresá la clave de nuevo.');
+    currentUser = null;
+    showLogin('Tu sesion expiro. Entrá de nuevo.');
   }
   return res;
 }
 
 function showLogin(message) {
   loginOverlay.classList.add('visible');
+  projectsOverlay.classList.remove('visible');
   loginError.textContent = message || '';
   loginPassword.value = '';
-  loginPassword.focus();
+  loginUsername.focus();
 }
 function hideLogin() {
   loginOverlay.classList.remove('visible');
 }
 
+function setLoginMode(mode) {
+  loginMode = mode;
+  const registering = mode === 'register';
+  loginSubtitle.textContent = registering
+    ? 'Elegí un usuario y una contraseña para empezar.'
+    : 'Entrá con tu cuenta para ver tus proyectos.';
+  loginSubmit.textContent = registering ? 'Crear cuenta' : 'Entrar';
+  loginSwitchText.textContent = registering ? '¿Ya tenés cuenta?' : '¿No tenés cuenta?';
+  loginSwitchBtn.textContent = registering ? 'Entrar' : 'Crear una';
+  loginPassword.autocomplete = registering ? 'new-password' : 'current-password';
+  loginError.textContent = '';
+}
+
+loginSwitchBtn.addEventListener('click', () => {
+  setLoginMode(loginMode === 'login' ? 'register' : 'login');
+  loginUsername.focus();
+});
+
 loginCard.addEventListener('submit', async (e) => {
   e.preventDefault();
   loginError.textContent = '';
+  loginSubmit.disabled = true;
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch(loginMode === 'register' ? '/api/register' : '/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: loginPassword.value }),
+      body: JSON.stringify({ username: loginUsername.value.trim(), password: loginPassword.value }),
     });
     const data = await res.json();
     if (data.ok) {
       setToken(data.token);
+      currentUser = data.user;
       hideLogin();
-      startApp();
+      await afterLogin();
     } else {
-      loginError.textContent = data.message || 'Clave incorrecta.';
+      loginError.textContent = data.message || 'No se pudo entrar.';
     }
   } catch {
     loginError.textContent = 'Error de red.';
+  } finally {
+    loginSubmit.disabled = false;
   }
+});
+
+logoutBtn.addEventListener('click', () => {
+  clearToken();
+  currentUser = null;
+  currentProvider?.destroy();
+  currentProvider = null;
+  projectsOverlay.classList.remove('visible');
+  setLoginMode('login');
+  showLogin();
 });
 
 // Colores del tema "Dark+" de VS Code
@@ -232,45 +282,22 @@ term.writeln('Presioná "▶ Ejecutar" (o Ctrl+Enter) para compilar y correr el 
 new ResizeObserver(fitTerminal).observe(terminalEl);
 window.addEventListener('resize', fitTerminal);
 
-// Salas sin friccion: si entras sin ?room, se genera una nueva y se
-// escribe en la URL con replaceState (sin ensuciar el historial). Asi
-// "entrar y compartir el link" alcanza, no hay que inventar un nombre.
-const ROOM_ADJETIVOS = [
-  'azul', 'rojo', 'verde', 'dorado', 'plata', 'rapido', 'lento', 'claro',
-  'oscuro', 'suave', 'firme', 'nuevo', 'largo', 'corto', 'alto', 'bajo',
-  'libre', 'sabio', 'noble', 'fresco', 'calmo', 'agudo', 'tibio', 'puro',
-];
-const ROOM_SUSTANTIVOS = [
-  'tigre', 'lobo', 'aguila', 'delfin', 'puma', 'zorro', 'halcon', 'ciervo',
-  'bosque', 'rio', 'monte', 'valle', 'campo', 'lago', 'costa', 'nube',
-  'faro', 'puerto', 'sendero', 'cometa', 'astro', 'norte', 'sur', 'este',
-];
+// ---------------------------------------------------------------------
+// Proyectos: cada uno tiene su ID unico y vive en /p/<id>.
+// ---------------------------------------------------------------------
+let currentProject = null; // { id, name, ownerName, isOwner }
 
-function pick(list) {
-  return list[Math.floor(Math.random() * list.length)];
+function projectIdFromUrl() {
+  const match = location.pathname.match(/^\/p\/([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
 }
 
-function generateRoomId() {
-  const n = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
-  return `${pick(ROOM_ADJETIVOS)}-${pick(ROOM_SUSTANTIVOS)}-${n}`;
+function setProjectInUrl(id) {
+  window.history.pushState({}, '', `/p/${id}`);
 }
 
-function getRoomFromUrl() {
-  const params = new URLSearchParams(location.search);
-  const existing = params.get('room');
-  if (existing) return existing;
-
-  const room = generateRoomId();
-  const url = new URL(location.href);
-  url.searchParams.set('room', room);
-  window.history.replaceState({}, '', url);
-  return room;
-}
-
-function setRoomInUrl(room) {
-  const url = new URL(location.href);
-  url.searchParams.set('room', room);
-  window.history.pushState({}, '', url);
+function projectLink(id) {
+  return `${location.origin}/p/${id}`;
 }
 
 function setStatus(state, text) {
@@ -297,16 +324,19 @@ function renderPeers(awareness) {
 }
 
 async function copyShareLink() {
+  const link = currentProject ? projectLink(currentProject.id) : location.href;
   try {
-    await navigator.clipboard.writeText(location.href);
+    await navigator.clipboard.writeText(link);
   } catch {
-    // Sin acceso al portapapeles: no hay respaldo funcional, el usuario
-    // puede copiar la URL de la barra de direcciones manualmente.
+    // Sin portapapeles (permiso denegado, http sin TLS): al menos se lo
+    // mostramos para que lo copie a mano.
+    window.prompt('Copiá este link para compartir el proyecto:', link);
+    return;
   }
   shareBtn.textContent = '¡Copiado!';
   shareBtn.classList.add('copied');
   setTimeout(() => {
-    shareBtn.textContent = 'Invitar';
+    shareBtn.textContent = 'Compartir';
     shareBtn.classList.remove('copied');
   }, 1500);
 }
@@ -1067,13 +1097,168 @@ function joinRoom(room) {
   });
 }
 
-function startApp() {
-  const room = getRoomFromUrl();
-  roomInput.value = room;
-  roomNameEl.textContent = room;
-  joinRoom(room);
+// ---------------------------------------------------------------------
+// Panel "Mis proyectos"
+// ---------------------------------------------------------------------
+function formatDate(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
-  fetch('/api/languages')
+function projectRow(p, { shared }) {
+  const row = document.createElement('div');
+  row.className = 'project-row';
+
+  const main = document.createElement('div');
+  main.className = 'project-main';
+  const name = document.createElement('div');
+  name.className = 'project-name';
+  name.textContent = p.name;
+  const meta = document.createElement('div');
+  meta.className = 'project-meta';
+  meta.textContent = shared
+    ? `${p.id} · de ${p.owner_name}`
+    : `${p.id} · ${formatDate(p.updated_at)}`;
+  main.append(name, meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'project-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.textContent = 'Link';
+  copyBtn.title = 'Copiar el link para compartir';
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(projectLink(p.id));
+      copyBtn.textContent = '¡Copiado!';
+      setTimeout(() => { copyBtn.textContent = 'Link'; }, 1400);
+    } catch {
+      window.prompt('Copiá este link:', projectLink(p.id));
+    }
+  });
+  actions.appendChild(copyBtn);
+
+  if (!shared) {
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.textContent = 'Renombrar';
+    renameBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const next = window.prompt('Nuevo nombre:', p.name);
+      if (!next) return;
+      await authFetch(`/api/projects/${p.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: next }),
+      });
+      if (currentProject?.id === p.id) setProjectName(next.trim());
+      loadProjects();
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'danger';
+    delBtn.textContent = 'Borrar';
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!window.confirm(`¿Borrar "${p.name}"? Se pierde todo su contenido.`)) return;
+      await authFetch(`/api/projects/${p.id}`, { method: 'DELETE' });
+      loadProjects();
+    });
+    actions.append(renameBtn, delBtn);
+  }
+
+  row.append(main, actions);
+  row.addEventListener('click', () => openProject(p.id));
+  return row;
+}
+
+async function loadProjects() {
+  try {
+    const res = await authFetch('/api/projects');
+    const data = await res.json();
+    if (!data.ok) return;
+    projectsOwnEl.innerHTML = '';
+    projectsSharedEl.innerHTML = '';
+    for (const p of data.own) projectsOwnEl.appendChild(projectRow(p, { shared: false }));
+    for (const p of data.shared) projectsSharedEl.appendChild(projectRow(p, { shared: true }));
+  } catch {
+    // sin conexion: dejamos las listas como estaban
+  }
+}
+
+function showProjects() {
+  projectsOverlay.classList.add('visible');
+  projectsUserEl.textContent = currentUser ? `@${currentUser.username}` : '';
+  loadProjects();
+}
+
+function hideProjects() {
+  projectsOverlay.classList.remove('visible');
+}
+
+projectsBtn.addEventListener('click', showProjects);
+
+projectsOverlay.addEventListener('click', (e) => {
+  // Click afuera de la tarjeta cierra, pero solo si ya hay un proyecto abierto.
+  if (e.target === projectsOverlay && currentProject) hideProjects();
+});
+
+newProjectForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = newProjectName.value.trim();
+  newProjectName.value = '';
+  try {
+    const res = await authFetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (data.ok) openProject(data.project.id);
+  } catch {
+    // sin conexion: no se crea nada
+  }
+});
+
+// ---------------------------------------------------------------------
+// Abrir un proyecto
+// ---------------------------------------------------------------------
+function setProjectName(name) {
+  if (currentProject) currentProject.name = name;
+  roomNameEl.textContent = name;
+  roomChip.title = currentProject?.isOwner
+    ? 'Click para renombrar el proyecto'
+    : `Proyecto de ${currentProject?.ownerName ?? 'otra persona'}`;
+  document.title = `${name} · Editor colaborativo`;
+}
+
+async function openProject(id) {
+  try {
+    const res = await authFetch(`/api/projects/${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if (!data.ok) {
+      if (res.status === 404) {
+        window.alert('Ese proyecto no existe o fue borrado.');
+        showProjects();
+      }
+      return;
+    }
+    currentProject = data.project;
+    setProjectInUrl(id);
+    setProjectName(data.project.name);
+    hideProjects();
+    joinRoom(id);
+  } catch {
+    // sin conexion: no abrimos nada
+  }
+}
+
+function startApp() {
+  fetch('/api/config')
     .then((r) => r.json())
     .then(({ languages }) => {
       languageCatalog = languages || [];
@@ -1094,32 +1279,56 @@ function startApp() {
     .catch(() => {});
 }
 
-async function boot() {
-  try {
-    const { required } = await fetch('/api/auth-status').then((r) => r.json());
-    if (required && !getToken()) {
-      showLogin();
-      return;
-    }
-  } catch {
-    // sin conexion: intentamos arrancar igual, joinRoom/authFetch avisaran si falla
-  }
+/** Con la sesion ya iniciada: abre el proyecto del link, o el listado. */
+async function afterLogin() {
   startApp();
+  const fromUrl = projectIdFromUrl();
+  if (fromUrl) await openProject(fromUrl);
+  else showProjects();
 }
 
-function goToRoom(room) {
-  const name = room.trim();
-  if (!name || name === currentRoom) return;
-  setRoomInUrl(name);
-  roomInput.value = name;
-  roomNameEl.textContent = name;
-  joinRoom(name);
+async function boot() {
+  let config;
+  try {
+    config = await fetch('/api/config').then((r) => r.json());
+  } catch {
+    config = { accounts: false };
+  }
+  accountsEnabled = Boolean(config.accounts);
+
+  if (!accountsEnabled) {
+    // Servidor sin base de datos: modo suelto, sin cuentas ni proyectos.
+    projectsBtn.hidden = true;
+    currentProject = { id: 'demo', name: 'Sin base de datos', isOwner: true };
+    setProjectName('Sin base de datos');
+    startApp();
+    joinRoom('demo');
+    return;
+  }
+
+  if (!getToken()) {
+    setLoginMode('login');
+    showLogin();
+    return;
+  }
+
+  try {
+    const res = await authFetch('/api/me');
+    const data = await res.json();
+    if (!data.ok) throw new Error('sesion invalida');
+    currentUser = data.user;
+    await afterLogin();
+  } catch {
+    clearToken();
+    setLoginMode('login');
+    showLogin();
+  }
 }
 
-// El chip muestra la sala actual; al clickearlo se convierte en un input
-// para saltar a otra sala escribiendo su nombre.
+// El chip muestra el nombre del proyecto; el dueño puede renombrarlo ahi.
 function openRoomEditor() {
-  roomInput.value = currentRoom ?? '';
+  if (!currentProject?.isOwner) return;
+  roomInput.value = currentProject.name;
   roomInput.hidden = false;
   roomChip.hidden = true;
   roomInput.focus();
@@ -1131,19 +1340,30 @@ function closeRoomEditor() {
   roomChip.hidden = false;
 }
 
-roomChip.addEventListener('click', openRoomEditor);
+async function commitRename() {
+  const name = roomInput.value.trim();
+  closeRoomEditor();
+  if (!name || !currentProject || name === currentProject.name) return;
+  await authFetch(`/api/projects/${currentProject.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  setProjectName(name);
+}
 
+roomChip.addEventListener('click', openRoomEditor);
 roomInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    goToRoom(roomInput.value);
-    closeRoomEditor();
-  } else if (e.key === 'Escape') {
-    closeRoomEditor();
-  }
+  if (e.key === 'Enter') commitRename();
+  else if (e.key === 'Escape') closeRoomEditor();
 });
 roomInput.addEventListener('blur', closeRoomEditor);
 
-newRoomBtn.addEventListener('click', () => goToRoom(generateRoomId()));
+// Volver/adelante del navegador entre proyectos.
+window.addEventListener('popstate', () => {
+  const id = projectIdFromUrl();
+  if (id && id !== currentProject?.id) openProject(id);
+});
 
 async function saveCurrentCode() {
   if (!currentDoc || !currentRoom || !filesArray) return;
