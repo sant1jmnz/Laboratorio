@@ -617,9 +617,7 @@ function fetchOutputFileContent(socket, name) {
     } else {
       const bytes = base64ToBytes(msg.base64);
       const text = decodeAsText(bytes);
-      const cached = { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text };
-      outputFileCache.set(name, cached);
-      syncGeneratedFileToExplorer(name, cached);
+      outputFileCache.set(name, { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text });
     }
     if (activeOutputTab === name) showOutputTab(name);
   };
@@ -629,19 +627,61 @@ function fetchOutputFileContent(socket, name) {
 
 // El servidor borra el directorio de una corrida (y lo que el programa haya
 // generado, ej. Productos.txt via ofstream) unos minutos despues de que
-// termina. Para que no se pierda, los archivos generados de texto se
-// escriben tambien como un archivo mas del explorador colaborativo: quedan
-// en el mismo documento Yjs que main.cpp (persistido en Postgres), visibles
-// para todos en el proyecto, y sobreviven a que esa sesion de ejecucion expire.
+// termina. Para que no se pierda -y para no tener el mismo archivo repetido
+// en dos listas distintas (la pestaña de arriba Y el explorador)- un
+// archivo generado va a UN solo lugar segun su tipo: el texto se escribe
+// como un archivo mas del explorador colaborativo (mismo documento Yjs que
+// main.cpp, editable, persistido); solo lo que no se puede editar como
+// texto (binarios, o algo demasiado grande) se ve en la pestaña de solo
+// lectura de arriba.
 const GENERATED_SYNC_MAX_BYTES = 512 * 1024;
 
 function syncGeneratedFileToExplorer(name, cached) {
   if (!currentDoc || !filesArray) return;
-  if (!cached.isText || cached.truncated || cached.size > GENERATED_SYNC_MAX_BYTES) return;
   currentDoc.transact(() => {
     if (!filesArray.toArray().includes(name)) filesArray.push([name]);
     replaceYText(fileYText(name), cached.text);
   });
+}
+
+// Pide el contenido de un archivo generado y decide donde mostrarlo: si es
+// texto (y no demasiado grande) al explorador; si no, a la pestaña de
+// arriba. La clasificacion ocurre antes de elegir donde ponerlo, para que
+// no termine apareciendo en los dos lugares a la vez.
+function routeGeneratedFile(socket, name) {
+  const alreadyCached = outputFileCache.get(name);
+  if (alreadyCached) {
+    placeGeneratedFile(socket, name, alreadyCached);
+    return;
+  }
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+  const onMessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type !== 'file-content' || msg.name !== name) return;
+    socket.removeEventListener('message', onMessage);
+    let cached;
+    if (msg.error) {
+      cached = { size: 0, bytes: new Uint8Array(), isText: true, text: `(${msg.error})` };
+    } else {
+      const bytes = base64ToBytes(msg.base64);
+      const text = decodeAsText(bytes);
+      cached = { size: msg.size, truncated: msg.truncated, bytes, isText: text !== null, text };
+    }
+    outputFileCache.set(name, cached);
+    placeGeneratedFile(socket, name, cached);
+  };
+  socket.addEventListener('message', onMessage);
+  socket.send(JSON.stringify({ type: 'get-file', name }));
+}
+
+function placeGeneratedFile(socket, name, cached) {
+  if (cached.isText && !cached.truncated && cached.size <= GENERATED_SYNC_MAX_BYTES) {
+    syncGeneratedFileToExplorer(name, cached);
+    return;
+  }
+  addOutputTab(socket, name);
+  if (activeOutputTab === null) showOutputTab(name);
 }
 
 function addOutputTab(socket, name) {
@@ -677,12 +717,7 @@ function resetOutputTabs() {
 }
 
 function renderGeneratedFiles(files, socket) {
-  for (const file of files) addOutputTab(socket, file.name);
-  if (files.length > 0 && activeOutputTab === null) showOutputTab(files[0].name);
-  // Se piden todos (no solo el que se esta mostrando) para que la
-  // sincronizacion al explorador -ver syncGeneratedFileToExplorer- no
-  // dependa de que alguien abra la pestaña de cada archivo generado.
-  for (const file of files) fetchOutputFileContent(socket, file.name);
+  for (const file of files) routeGeneratedFile(socket, file.name);
 }
 
 fileViewerDownloadBtn.addEventListener('click', () => {
