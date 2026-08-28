@@ -24,9 +24,9 @@
     "codemirror": "^6.0.2",
     "express": "^4.19.2",
     "node-pty": "^1.1.0",
+    "pg": "^8.23.0",
     "ws": "^8.18.0",
     "y-codemirror.next": "^0.3.6",
-    "y-leveldb": "^0.2.0",
     "y-websocket": "^2.1.0",
     "yjs": "^13.6.19"
   },

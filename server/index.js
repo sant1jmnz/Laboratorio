@@ -8,67 +8,218 @@ import { setupWSConnection, setPersistence } from 'y-websocket/bin/utils';
 import { handleInteractiveConnection } from './interactive-run.js';
 import { handleDebugConnection } from './debug-session.js';
 import { isConfigured, loadWorkspace, saveWorkspace } from './github-save.js';
-import { authRequired, checkPassword, issueToken, verifyToken } from './auth.js';
 import { languageSummaries } from './languages.js';
+import { dbEnabled, initSchema } from './db.js';
+import { getUser, issueSession, loginUser, readSession, registerUser } from './accounts.js';
+import {
+  createProject,
+  deleteProject,
+  getProject,
+  listProjects,
+  loadDocState,
+  recordVisit,
+  renameProject,
+  saveDocState,
+  touchProject,
+} from './projects.js';
 
 // y-websocket/bin/utils (CJS) carga yjs via require(), que resuelve a un
 // build distinto (dist/yjs.cjs) del que usa `import 'yjs'` (dist/yjs.mjs).
 // Dos instancias de la misma libreria rompen los chequeos internos de Yjs
-// (instanceof, etc). Requerimos yjs y y-leveldb con require() aca tambien
-// (en vez de `import`), para que ambos compartan exactamente la misma
-// instancia de yjs que ya usa y-websocket internamente.
+// (instanceof, etc), asi que lo requerimos igual que y-websocket para que
+// ambos compartan exactamente la misma instancia.
 const require = createRequire(import.meta.url);
 const Y = require('yjs');
-const { LeveldbPersistence } = require('y-leveldb');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
-// Persiste los documentos Yjs (workspaces de cada sala) en disco, asi
-// sobreviven a que el contenedor se duerma/despierte o a un reinicio sin
-// redeploy. No sobrevive a un redeploy real en el free tier de Render
-// (disco efimero) -- para eso esta el boton "Guardar" a GitHub.
-const persistenceDir = process.env.YPERSISTENCE || path.join(__dirname, '..', 'data', 'yjs');
-const ldb = new LeveldbPersistence(persistenceDir);
-setPersistence({
-  bindState: async (docName, ydoc) => {
-    const persisted = await ldb.getYDoc(docName);
-    Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(persisted));
-    ydoc.on('update', (update) => {
-      ldb.storeUpdate(docName, update);
-    });
-  },
-  writeState: async () => {},
-});
+// ---------------------------------------------------------------------
+// Persistencia del contenido de los proyectos
+//
+// El estado Yjs va a Postgres (no a disco) porque el disco del plan free
+// se borra en cada redeploy. Se guarda con debounce: mientras alguien
+// escribe no tocamos la base, y volcamos el documento entero un rato
+// despues de la ultima tecla.
+// ---------------------------------------------------------------------
+const SAVE_DEBOUNCE_MS = 1500;
+const pendingSaves = new Map(); // docName -> timeout
+
+function projectIdFromDocName(docName) {
+  // El cliente se conecta a /docs/<projectId>
+  return String(docName).replace(/^docs\//, '');
+}
+
+if (dbEnabled()) {
+  setPersistence({
+    bindState: async (docName, ydoc) => {
+      const projectId = projectIdFromDocName(docName);
+      const saved = await loadDocState(projectId).catch(() => null);
+      if (saved && saved.length > 0) {
+        Y.applyUpdate(ydoc, new Uint8Array(saved));
+      }
+
+      ydoc.on('update', () => {
+        if (pendingSaves.has(docName)) return;
+        pendingSaves.set(
+          docName,
+          setTimeout(async () => {
+            pendingSaves.delete(docName);
+            try {
+              await saveDocState(projectId, Buffer.from(Y.encodeStateAsUpdate(ydoc)));
+              await touchProject(projectId);
+            } catch (err) {
+              console.error(`No se pudo guardar el proyecto ${projectId}:`, err.message);
+            }
+          }, SAVE_DEBOUNCE_MS)
+        );
+      });
+    },
+    writeState: async (docName, ydoc) => {
+      // Se llama cuando se va el ultimo cliente: guardamos ya, sin esperar.
+      const projectId = projectIdFromDocName(docName);
+      clearTimeout(pendingSaves.get(docName));
+      pendingSaves.delete(docName);
+      await saveDocState(projectId, Buffer.from(Y.encodeStateAsUpdate(ydoc))).catch((err) => {
+        console.error(`No se pudo guardar el proyecto ${projectId}:`, err.message);
+      });
+    },
+  });
+}
 
 const app = express();
 app.use(express.json({ limit: '512kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-function requireAuth(req, res, next) {
-  if (!authRequired()) return next();
+function tokenFromRequest(req) {
   const header = req.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (verifyToken(token)) return next();
-  res.status(401).json({ ok: false, message: 'No autenticado.' });
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
 }
 
-app.get('/api/auth-status', (_req, res) => {
-  res.json({ required: authRequired() });
-});
-
-app.get('/api/languages', (_req, res) => {
-  res.json({ languages: languageSummaries() });
-});
-
-app.post('/api/login', (req, res) => {
-  const { password } = req.body ?? {};
-  if (!checkPassword(password)) {
-    res.status(401).json({ ok: false, message: 'Clave incorrecta.' });
+/** Corta con 401 si no hay sesion valida; si la hay, deja req.userId. */
+function requireAuth(req, res, next) {
+  const userId = readSession(tokenFromRequest(req));
+  if (!userId) {
+    res.status(401).json({ ok: false, message: 'Necesitas iniciar sesion.' });
     return;
   }
-  res.json({ ok: true, token: issueToken() });
+  req.userId = userId;
+  next();
+}
+
+function needsDb(_req, res, next) {
+  if (!dbEnabled()) {
+    res.status(503).json({ ok: false, message: 'El servidor no tiene base de datos configurada.' });
+    return;
+  }
+  next();
+}
+
+app.get('/api/config', (_req, res) => {
+  res.json({ accounts: dbEnabled(), languages: languageSummaries() });
 });
+
+// ---- Cuentas ----
+
+app.post('/api/register', needsDb, async (req, res) => {
+  const { username, password } = req.body ?? {};
+  try {
+    const result = await registerUser(username, password);
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json({ ok: true, token: issueSession(result.user.id), user: result.user });
+  } catch (err) {
+    console.error('Error registrando usuario:', err.message);
+    res.status(500).json({ ok: false, message: 'No se pudo crear la cuenta.' });
+  }
+});
+
+app.post('/api/login', needsDb, async (req, res) => {
+  const { username, password } = req.body ?? {};
+  try {
+    const result = await loginUser(username, password);
+    if (!result.ok) {
+      res.status(401).json(result);
+      return;
+    }
+    res.json({ ok: true, token: issueSession(result.user.id), user: result.user });
+  } catch (err) {
+    console.error('Error iniciando sesion:', err.message);
+    res.status(500).json({ ok: false, message: 'No se pudo iniciar sesion.' });
+  }
+});
+
+app.get('/api/me', needsDb, requireAuth, async (req, res) => {
+  const user = await getUser(req.userId);
+  if (!user) {
+    res.status(401).json({ ok: false, message: 'Sesion invalida.' });
+    return;
+  }
+  res.json({ ok: true, user });
+});
+
+// ---- Proyectos ----
+
+app.get('/api/projects', needsDb, requireAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await listProjects(req.userId)) });
+  } catch (err) {
+    console.error('Error listando proyectos:', err.message);
+    res.status(500).json({ ok: false, message: 'No se pudieron cargar los proyectos.' });
+  }
+});
+
+app.post('/api/projects', needsDb, requireAuth, async (req, res) => {
+  try {
+    const project = await createProject(req.userId, req.body?.name);
+    res.json({ ok: true, project });
+  } catch (err) {
+    console.error('Error creando proyecto:', err.message);
+    res.status(500).json({ ok: false, message: 'No se pudo crear el proyecto.' });
+  }
+});
+
+app.get('/api/projects/:id', needsDb, requireAuth, async (req, res) => {
+  const project = await getProject(req.params.id);
+  if (!project) {
+    res.status(404).json({ ok: false, message: 'Ese proyecto no existe.' });
+    return;
+  }
+  // Cualquiera con el link puede abrirlo; si no es suyo, queda registrado
+  // en "Compartidos conmigo".
+  if (project.owner_id !== req.userId) await recordVisit(req.userId, project.id);
+  res.json({
+    ok: true,
+    project: {
+      id: project.id,
+      name: project.name,
+      ownerName: project.owner_name,
+      isOwner: project.owner_id === req.userId,
+    },
+  });
+});
+
+app.patch('/api/projects/:id', needsDb, requireAuth, async (req, res) => {
+  const ok = await renameProject(req.params.id, req.userId, req.body?.name);
+  if (!ok) {
+    res.status(403).json({ ok: false, message: 'Solo el dueño puede renombrar el proyecto.' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/projects/:id', needsDb, requireAuth, async (req, res) => {
+  const ok = await deleteProject(req.params.id, req.userId);
+  if (!ok) {
+    res.status(403).json({ ok: false, message: 'Solo el dueño puede borrar el proyecto.' });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+// ---- Guardado en GitHub (opcional) ----
 
 app.get('/api/save-status', requireAuth, (_req, res) => {
   res.json({ enabled: isConfigured() });
@@ -76,8 +227,7 @@ app.get('/api/save-status', requireAuth, (_req, res) => {
 
 app.get('/api/saved/:room', requireAuth, async (req, res) => {
   try {
-    const files = await loadWorkspace(req.params.room);
-    res.json({ files });
+    res.json({ files: await loadWorkspace(req.params.room) });
   } catch {
     res.status(500).json({ files: [] });
   }
@@ -93,11 +243,16 @@ app.post('/api/save', requireAuth, async (req, res) => {
   res.status(result.ok ? 200 : 500).json(result);
 });
 
+// La app es de una sola pagina: /p/<id> lo resuelve el cliente.
+app.get('/p/:id', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
 const server = http.createServer(app);
 
-// Dos WebSocketServer separados, ruteados a mano por path en "upgrade":
-// /run-ws es la terminal interactiva de compilar/ejecutar; todo lo demas
-// (/docs/<sala>) es la sincronizacion colaborativa de Yjs.
+// Tres WebSocketServer ruteados a mano por path en "upgrade":
+// /run-ws es la terminal interactiva, /debug-ws el depurador, y el resto
+// (/docs/<proyecto>) la sincronizacion colaborativa de Yjs.
 const collabWss = new WebSocketServer({ noServer: true });
 const runWss = new WebSocketServer({ noServer: true });
 const debugWss = new WebSocketServer({ noServer: true });
@@ -105,11 +260,9 @@ const debugWss = new WebSocketServer({ noServer: true });
 collabWss.on('connection', (ws, req) => {
   setupWSConnection(ws, req);
 });
-
 runWss.on('connection', (ws) => {
   handleInteractiveConnection(ws);
 });
-
 debugWss.on('connection', (ws) => {
   handleDebugConnection(ws);
 });
@@ -117,7 +270,9 @@ debugWss.on('connection', (ws) => {
 server.on('upgrade', (req, socket, head) => {
   const { pathname, searchParams } = new URL(req.url, 'http://localhost');
 
-  if (authRequired() && !verifyToken(searchParams.get('token'))) {
+  // Con cuentas activas, ninguna conexion (ni colaboracion ni ejecucion)
+  // se acepta sin sesion valida.
+  if (dbEnabled() && !readSession(searchParams.get('token'))) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     socket.destroy();
     return;
@@ -130,6 +285,24 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Editor colaborativo escuchando en http://localhost:${PORT}`);
-});
+async function start() {
+  if (dbEnabled()) {
+    try {
+      await initSchema();
+      console.log('Base de datos lista.');
+    } catch (err) {
+      console.error('No se pudo preparar la base de datos:', err.message);
+      process.exit(1);
+    }
+  } else {
+    console.warn(
+      'DATABASE_URL no esta configurada: el editor arranca sin cuentas ni proyectos guardados.'
+    );
+  }
+
+  server.listen(PORT, () => {
+    console.log(`Editor colaborativo escuchando en http://localhost:${PORT}`);
+  });
+}
+
+start();
