@@ -3,3 +3,8 @@ node_modules/
 public/bundle.js
 /data/
 __pycache__/
+
+# herramientas de IA locales
+.agents/
+.claude/
+skills-lock.json
