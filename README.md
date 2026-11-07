@@ -1,5 +1,7 @@
 # Editor colaborativo en tiempo real
 
+![Editor colaborativo: código C++ y su salida en la terminal](docs/editor.png)
+
 Editor de código multi-lenguaje tipo VS Code donde varias personas editan a la vez y ven los cambios de las demás al instante (cursores incluidos, multi-archivo con explorador lateral), como Google Docs pero para código — con un botón para compilar y correr el programa en una terminal interactiva real (tipo OnlineGDB) y una clave de acceso opcional.
 
 ## Lenguajes soportados
